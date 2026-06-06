@@ -310,9 +310,14 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
 
         pop_X = res.X if isinstance(res.X, list) else list(res.X)
         for x in pop_X:
-            params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                               x["orientation"], x["weather"], x["road_shape"]])
-            pred, unc = obj_ensemble.predict(params)
+            # Handle both dict and array formats from pymoo
+            if isinstance(x, dict):
+                params = np.array([x["car_speed"], x["p_x"], x["p_y"],
+                                   x["orientation"], x["weather"], x["road_shape"]])
+            else:
+                # x is a numpy array [car_speed, p_x, p_y, orientation, weather, road_shape]
+                params = np.array(x)
+            pred, unc = obj_ensemble.predict(params.reshape(1, -1))
 
             if pred < best_score:
                 best_score = pred
@@ -419,8 +424,13 @@ def global_search_hybrid(X_array, F_array, uncovered_objectives, pop_size=30, n_
     pop_X = res.X if isinstance(res.X, list) else list(res.X)
 
     for x in pop_X:
-        params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                           x["orientation"], x["weather"], x["road_shape"]])
+        # Handle both dict and array formats from pymoo
+        if isinstance(x, dict):
+            params = np.array([x["car_speed"], x["p_x"], x["p_y"],
+                               x["orientation"], x["weather"], x["road_shape"]])
+        else:
+            # x is a numpy array
+            params = np.array(x)
 
         # For each objective, track best and most uncertain candidates
         for obj_idx in uncovered_objectives:
