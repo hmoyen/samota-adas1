@@ -848,6 +848,52 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
     print(f"Min Scores: {min_scores}")
     print(f"Efficiency: {violations/eval_count:.4f} violations/eval")
 
+    # ========================================================================
+    # SAVE CSV FILES
+    # ========================================================================
+
+    import os
+
+    # Create logdir if it doesn't exist
+    if not os.path.exists("pfes_samota_baseline"):
+        os.makedirs("pfes_samota_baseline", exist_ok=True)
+
+    # Save best scores (like PFES: score_NSGA3_1.csv)
+    best_scores_df = pd.DataFrame({
+        'V0': [min_scores[0]],
+        'V1': [min_scores[1]],
+        'V2': [min_scores[2]],
+        'V3': [min_scores[3]],
+        'V4': [min_scores[4]],
+    })
+    best_scores_df.to_csv('pfes_samota_baseline/score_NSGA3_1.csv', index=False)
+    print("\n✓ Saved: pfes_samota_baseline/score_NSGA3_1.csv")
+
+    # Save requirements breakdown (like PFES: reqs_NSGA3_1.csv)
+    reqs_df = pd.DataFrame({
+        'R0': [unsatisfied_reqs[0]],
+        'R1': [unsatisfied_reqs[1]],
+        'R2': [unsatisfied_reqs[2]],
+        'conjunction': [violations],
+    })
+    reqs_df.to_csv('pfes_samota_baseline/reqs_NSGA3_1.csv', index=False)
+    print("✓ Saved: pfes_samota_baseline/reqs_NSGA3_1.csv")
+
+    # Save all evaluations (like PFES)
+    X_df = pd.DataFrame(
+        database_X,
+        columns=['car_speed', 'p_x', 'p_y', 'orientation', 'weather', 'road_shape']
+    )
+    X_df.to_csv('pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv', index=False)
+    print("✓ Saved: pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv")
+
+    F_df = pd.DataFrame(
+        database_processed,
+        columns=['V0', 'V1', 'V2', 'V3', 'V4']
+    )
+    F_df.to_csv('pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv', index=False)
+    print("✓ Saved: pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv")
+
     return {
         'elapsed': elapsed,
         'eval_count': int(eval_count),
