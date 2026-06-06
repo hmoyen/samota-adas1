@@ -580,7 +580,12 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
             # ✓ Create SINGLE RBF per cluster per objective (NOT ensemble!)
             # RBF_Model expects: train_data = [(X, y), (X, y), ...]
             train_data = [(X_cluster[i], F_cluster[i, obj_idx]) for i in range(len(X_cluster))]
-            local_surrogate = RBF_Model(n_neurons=10, train_data=train_data)
+
+            try:
+                local_surrogate = RBF_Model(n_neurons=10, train_data=train_data)
+            except np.linalg.LinAlgError:
+                # Skip cluster if RBF training fails (singular matrix = collinear/identical points)
+                continue
 
             # Create LS problem with cluster's RBF surrogate
             problem = LSProblem(local_surrogate)
