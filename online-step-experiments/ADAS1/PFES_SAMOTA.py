@@ -308,15 +308,21 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         uncertain_params = None
         best_uncertainty = -np.inf
 
-        pop_X = res.X if isinstance(res.X, list) else list(res.X)
+        # Handle both 1D (single solution) and 2D (population) array formats
+        if isinstance(res.X, np.ndarray) and res.X.ndim == 1:
+            pop_X = [res.X]
+        else:
+            pop_X = res.X if isinstance(res.X, list) else list(res.X)
         for x in pop_X:
-            # Handle both dict and array formats from pymoo
-            if isinstance(x, dict):
-                params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                                   x["orientation"], x["weather"], x["road_shape"]])
-            else:
-                # x is a numpy array [car_speed, p_x, p_y, orientation, weather, road_shape]
-                params = np.array(x)
+            # Extract 6 parameters: car_speed, p_x, p_y, orientation, weather, road_shape
+            try:
+                # Try dictionary access first (mixed variables)
+                params = np.array([float(x["car_speed"]), float(x["p_x"]), float(x["p_y"]),
+                                   int(x["orientation"]), int(x["weather"]), int(x["road_shape"])])
+            except (TypeError, KeyError):
+                # Fall back to array indexing
+                params = np.array([float(x[0]), float(x[1]), float(x[2]),
+                                   int(x[3]), int(x[4]), int(x[5])])
             pred, unc = obj_ensemble.predict(params.reshape(1, -1))
 
             if pred < best_score:
@@ -421,23 +427,29 @@ def global_search_hybrid(X_array, F_array, uncovered_objectives, pop_size=30, n_
     best_per_obj = {}  # obj_idx → (params, score)
     uncertain_per_obj = {}  # obj_idx → (params, uncertainty)
 
-    pop_X = res.X if isinstance(res.X, list) else list(res.X)
+    # Handle both 1D (single solution) and 2D (population) array formats
+    if isinstance(res.X, np.ndarray) and res.X.ndim == 1:
+        pop_X = [res.X]
+    else:
+        pop_X = res.X if isinstance(res.X, list) else list(res.X)
 
     for x in pop_X:
-        # Handle both dict and array formats from pymoo
-        if isinstance(x, dict):
-            params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                               x["orientation"], x["weather"], x["road_shape"]])
-        else:
-            # x is a numpy array
-            params = np.array(x)
+        # Extract 6 parameters: car_speed, p_x, p_y, orientation, weather, road_shape
+        try:
+            # Try dictionary access first (mixed variables)
+            params = np.array([float(x["car_speed"]), float(x["p_x"]), float(x["p_y"]),
+                               int(x["orientation"]), int(x["weather"]), int(x["road_shape"])])
+        except (TypeError, KeyError):
+            # Fall back to array indexing
+            params = np.array([float(x[0]), float(x[1]), float(x[2]),
+                               int(x[3]), int(x[4]), int(x[5])])
 
         # For each objective, track best and most uncertain candidates
         for obj_idx in uncovered_objectives:
             if obj_idx not in obj_ensembles_dict:
                 continue
 
-            pred, unc = obj_ensembles_dict[obj_idx].predict(params)
+            pred, unc = obj_ensembles_dict[obj_idx].predict(params.reshape(1, -1))
 
             # Track BEST (lowest score)
             if obj_idx not in best_per_obj or pred < best_per_obj[obj_idx][1]:
