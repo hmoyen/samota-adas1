@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "mdp-simulator"
+version = "0.1.9"
+description = ""
+authors = ["Umberto M <Umberto.messuti@mail.polimi.it>"]
+readme = "README.md"
+packages = [{ include = "mdp_simulator" }]
+
+[tool.poetry.dependencies]
+python = "~3.11"
+colorama = "^0.4.6"
+termcolor = "^2.2.0"
+numpy = "^1.24.1"
+scipy = "^1.10.0"
+arviz = "^0.14.0"
+pandas = "^1.5.3"
+pymdptoolbox = "^4.0b3"
+matplotlib = "^3.6.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

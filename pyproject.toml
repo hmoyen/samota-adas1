@@ -1,0 +1,55 @@
+[tool.poetry]
+name = "icse2025-samota-adas1"
+version = "1.0.0"
+description = "ICSE 2025 Replication: SAMOTA - Parametric Falsification with Surrogate-Assisted Many-Objective Test Generation"
+authors = ["Helena Moyen <helena@example.com>"]
+readme = "README.md"
+license = "MIT"
+packages = []
+
+[tool.poetry.dependencies]
+python = "^3.10,<3.12"
+numpy = "^1.26"
+scipy = "^1.11"
+scikit-learn = "^1.3"
+pandas = "^2.0"
+matplotlib = "^3.8"
+pymoo = "^0.6"
+click = "^8.1"
+hdbscan = "^0.8"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4"
+black = "^23.11"
+flake8 = "^6.1"
+mypy = "^1.7"
+ipython = "^8.16"
+jupyter = "^1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
