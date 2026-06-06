@@ -42,7 +42,7 @@ python -c "import PFES_SAMOTA; PFES_SAMOTA.run_pfes_samota(budget=900, max_itera
 |--------|-----------|-----------------|
 | **Total Violations** | Count of test cases violating ≥1 constraint | Higher is better (more faults found) |
 | **R0, R1, R2** | Per-constraint violation breakdown | Shows which safety properties are findable |
-| **Objectives Covered** | How many constraints were violated (0-3) | 3/3 = found violations for all constraints |
+| **Objectives Covered** | How many optimization objectives improved (0-5) | 5/5 = all 5 fitness objectives optimized |
 | **Efficiency (v/e)** | Violations per evaluation | Higher = better use of evaluation budget |
 | **Time** | Wall-clock time for entire run | Both approaches use same 900 evals |
 
@@ -102,17 +102,27 @@ results_comparison/                # Output from comparative experiments
 
 ---
 
-## Understanding 3 Objectives
+## Understanding 5 Objectives
 
-ADAS1 has **3 constraints**, not 5:
+ADAS1 has **3 constraints** (R0, R1, R2) but **5 optimization objectives**:
 
-| Index | Constraint | Property | Threshold |
-|-------|-----------|----------|-----------|
-| **R0** | S0.a[0] | First autonomy constraint | constraints["S0"]["a"][0] |
-| **R1** | S2.b[1] | Second behavior metric | constraints["S2"]["b"][1] |
-| **R2** | S0.a[1] + S2.b[1] | Combined constraint | Two metrics together |
+| Objective | Source | Constraint | Description |
+|-----------|--------|-----------|-------------|
+| **Obj 0** | S0.a bound 1 | R0 | Autonomy lower bound |
+| **Obj 1** | S0.a bound 2 | R0 | Autonomy upper bound |
+| **Obj 2** | S2.b element 1 | R1 | Behavior metric 1 |
+| **Obj 3** | S2.b element 2 | R1 | Behavior metric 2 |
+| **Obj 4** | S2.b element 3 | R1 | Behavior metric 3 |
 
-**Key Point**: Uncovered objectives = those where `min(fitness) >= 0` (no violations found yet).
+**Why 5 objectives?** The `region_scores()` function returns one fitness value per bound/element, so:
+- S0.a has 2 bound values → 2 objectives
+- S2.b has 3 element values → 3 objectives
+- Total: 5 optimization objectives
+
+**Constraint Satisfaction (3 values):**
+- **R0**: Both S0.a bounds satisfied
+- **R1**: All 3 S2.b elements within bounds
+- **R2**: Both R0 AND R1 satisfied
 
 ---
 
@@ -122,10 +132,11 @@ ADAS1 has **3 constraints**, not 5:
 
 ```
 Phase 1: ART (300 evals) ─→ Find initial violations
-Phase 2: NSGA3 (600 evals) ──→ Search all 3 objectives simultaneously
+Phase 2: NSGA3 (600 evals) ──→ Search all 5 objectives simultaneously
          ├─ Population: 30
          ├─ Generations: 20
-         └─ All objectives always included
+         ├─ Reference directions: 15 (das-dennis, 5 objectives)
+         └─ All 5 objectives always included
 ```
 
 ### PFES+SAMOTA (Hybrid)
@@ -133,15 +144,16 @@ Phase 2: NSGA3 (600 evals) ──→ Search all 3 objectives simultaneously
 ```
 Phase 1: ART (300 evals) ─→ Find initial violations
 Phase 2: Loop (600 evals budget)
-   ├─ Identify uncovered objectives (R0, R1, R2 status)
-   ├─ GS: Train per-objective surrogates + NSGA3
-   │   └─ Only on uncovered objectives (dynamic)
-   ├─ LS: RBF per cluster + per-objective optimization
-   │   └─ Focused refinement
-   └─ Repeat until budget exhausted or all objectives covered
+   ├─ Identify uncovered objectives (from 5 objectives)
+   ├─ GS: Train 5 per-objective surrogates + NSGA3
+   │   ├─ One ensemble per objective
+   │   └─ Only use surrogates for uncovered objectives (dynamic)
+   ├─ LS: RBF per cluster + per-objective single-objective opt
+   │   └─ Focused local refinement
+   └─ Repeat until budget exhausted or all 5 objectives improved
 ```
 
-**Key Difference**: PFES+SAMOTA filters to uncovered objectives, making search more focused.
+**Key Difference**: PFES+SAMOTA uses 5 per-objective surrogates (one per fitness objective) and dynamically filters to uncovered objectives, making search more efficient.
 
 ---
 

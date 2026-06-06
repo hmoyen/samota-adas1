@@ -101,7 +101,7 @@ def main(size, niterations, nruns, optalg, verbose, logdir, seed):
     LOGDIR = logdir
     
     NREQS = len(conf.CONSTRAINTS)  # 3 requirements (R0, R1, R2)
-    OBJECTIVES = len(conf.CONSTRAINTS)  # Use actual constraints count, not hardcoded
+    OBJECTIVES = 5  # From MINIMAL_CONSTRAINTS: S0.a (2 bounds) + S2.b (3 elements) = 5 objectives
 
     uns_reqs_df = pd.DataFrame(columns=[f'R{j}' for j in range(0, NREQS)] + ["conjunction"])
     score_df = pd.DataFrame(columns=[f'V{j}' for j in range(0, OBJECTIVES)])

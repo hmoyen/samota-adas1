@@ -2,7 +2,7 @@
 
 **Author**: Helena Moyen
 **Date**: May 20, 2026
-**Objectives**: 3 (R0, R1, R2 constraints from ADAS1)
+**Objectives**: 5 (from MINIMAL_CONSTRAINTS: S0.a[2 bounds] + S2.b[3 elements] = 5 fitness values)
 
 ---
 
@@ -10,14 +10,14 @@
 
 ```
 Algorithm 1: PFES + SAMOTA Hybrid Framework
-Input:  Search space X, budget B (900 evaluations), CONSTRAINTS (3 objectives)
+Input:  Search space X, budget B (900 evaluations), CONSTRAINTS (3 requirements → 5 objectives)
 Output: Archive A (test cases violating constraints), Statistics
 
 1: // PHASE 1: Adaptive Random Testing
 2: P ← ART_InitialPopulation(size=300)          // Maximin sampling
 3: A ← ∅                                        // Archive
 4: D ← ∅                                        // Evaluation database
-5: U_global ← {0, 1, 2}                        // All 3 objectives
+5: U_global ← {0, 1, 2, 3, 4}                  // All 5 optimization objectives (S0.a[2] + S2.b[3])
 6: evals_phase1 ← 0
 
 7: for each test case x ∈ P do
@@ -35,9 +35,9 @@ Output: Archive A (test cases violating constraints), Statistics
 18: budget_remaining ← B - evals_phase1
 
 19: while budget_remaining > 0 do
-20:    // Update uncovered objectives
-21:    U ← {i | min(D[:, i]) < 0}              // Violated objectives
-22:    U_uncovered ← {0, 1, 2} \ U             // Objectives not yet violated
+20:    // Update uncovered objectives (5 total)
+21:    U ← {i | min(D[:, i]) < 0}              // Violated objectives (from 5)
+22:    U_uncovered ← {0, 1, 2, 3, 4} \ U       // Objectives not yet violated (initially all 5)
 23:
 24:    if U_uncovered = ∅ then
 25:        break                                // All objectives covered
@@ -286,12 +286,12 @@ Output: Surrogate ensemble (GP + Polynomial + RBF)
 | Aspect | PFES (Baseline) | PFES+SAMOTA (Hybrid) |
 |--------|-----------------|----------------------|
 | **Phase 1** | ART (300 evals) | ART (300 evals) - Same |
-| **Phase 2** | NSGA3 on real simulator (600 evals, expensive) | Iterative GS+LS with surrogates (guides selection) |
-| **Objective Filtering** | All 3 objectives, every iteration | Only uncovered objectives (dynamic) |
-| **Surrogates** | None (0 evals) | Per-objective ensembles (600 GS + 6000+ LS surr evals) |
-| **Selection** | NSGA3 decides directly on simulator | Surrogates narrow down, NSGA3 selects from top candidates |
-| **Budget** | 900 real evals | 300 Phase1 + ~600 Phase2 real evals + 600k surrogate evals |
-| **Expected Gain** | Baseline | 2-3× efficiency (same violations, fewer evals) |
+| **Phase 2** | NSGA3 on real simulator (600 evals, expensive, 5 objectives) | Iterative GS+LS with surrogates (guides selection, 5 per-objective models) |
+| **Objective Filtering** | All 5 objectives, every iteration | Only uncovered objectives (dynamic filtering from 5) |
+| **Surrogates** | None (0 evals) | 5 per-objective ensembles (600 GS + 6000+ LS surr evals) |
+| **Selection** | NSGA3 decides directly on simulator (15 ref dirs for 5 objectives) | Per-objective surrogates narrow down, NSGA3 selects best+uncertain per obj |
+| **Budget** | 900 real evals | 300 Phase1 + ~600 Phase2 real evals + surrogate evals |
+| **Expected Gain** | Baseline | 2-3× efficiency (same violations, guided search via 5 surrogates) |
 
 ---
 
@@ -329,10 +329,19 @@ Why This Works for Surrogates:
 - `weather`: [0, 2] (integer)
 - `road_shape`: [0, 2] (integer)
 
-**Constraints** (3 objectives):
-- **R0**: S0.a constraint (first threshold)
-- **R1**: S2.b constraint (middle threshold)
-- **R2**: Combined S0.a + S2.b constraint (second threshold)
+**Constraints & Objectives**:
+
+Requirement Satisfaction (3 states):
+- **R0**: S0.a within bounds (both 2 elements satisfied)
+- **R1**: S2.b within bounds (all 3 elements satisfied)
+- **R2**: Both R0 AND R1 satisfied
+
+Optimization Objectives (5 fitness values):
+- **Obj 0**: S0.a element 1 fitness
+- **Obj 1**: S0.a element 2 fitness
+- **Obj 2**: S2.b element 1 fitness
+- **Obj 3**: S2.b element 2 fitness
+- **Obj 4**: S2.b element 3 fitness
 
 **Budget**: 900 evaluations total
 - Phase 1 (ART): 300 evals

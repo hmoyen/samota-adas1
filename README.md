@@ -13,7 +13,7 @@ SAMOTA combines machine learning surrogates with multi-objective optimization to
 - ✅ PFES baseline for comparison
 - ✅ Comparative stats framework (CSV + statistical analysis)
 - ✅ Poetry dependency management
-- ✅ 3 safety constraints (R0, R1, R2)
+- ✅ 5 optimization objectives (from 3 constraints: S0.a has 2 bounds + S2.b has 3 bounds)
 
 ## Quick Start
 
@@ -106,13 +106,22 @@ icse2025-samota-adas1/
 
 See `online-step-experiments/ADAS1/PFES_SAMOTA_ALGORITHMS_CORRECTED.md` for formal pseudocode.
 
-## Safety Constraints (ADAS1)
+## Objectives (ADAS1)
 
-| ID | Constraint | Property | Threshold |
-|----|-----------|----------|-----------|
-| **R0** | S0.a[0] | Autonomy | constraints["S0"]["a"][0] |
-| **R1** | S2.b[1] | Behavior | constraints["S2"]["b"][1] |
-| **R2** | S0.a[1] + S2.b[1] | Combined | Both R0 and R1 |
+The system has **5 optimization objectives** (not 3):
+
+| Objective | Source | Bounds | Description |
+|-----------|--------|--------|-------------|
+| **Obj 0** | S0.a[0] | [lower, upper] | Autonomy bound 1 |
+| **Obj 1** | S0.a[1] | [lower, upper] | Autonomy bound 2 |
+| **Obj 2** | S2.b[0] | value | Behavior element 1 |
+| **Obj 3** | S2.b[1] | value | Behavior element 2 |
+| **Obj 4** | S2.b[2] | value | Behavior element 3 |
+
+**3 Constraint Satisfaction States (Requirements)**:
+- **R0**: S0.a satisfied (both bounds met)
+- **R1**: S2.b satisfied (all 3 elements within bounds)
+- **R2**: Both R0 AND R1 satisfied
 
 ## Configuration
 
@@ -137,9 +146,9 @@ CONSTRAINTS = [...]
 
 | Metric | PFES Baseline | PFES+SAMOTA Target |
 |--------|---|---|
-| **Violations** | 37 ± 8 | 35-40 |
-| **R0/R1/R2** | 15 / 3 / 3 | 15-18 / 3-5 / 3-5 |
-| **Objectives Covered** | 3/3 | 3/3 |
+| **Violations (R0/R1/R2)** | 15 / 3 / 3 | 15-18 / 3-5 / 3-5 |
+| **Objectives Covered** | 5/5 | 5/5 |
+| **Min Fitness** | ~0.014-0.022 | ~0.013-0.021 |
 | **Time** | ~50 min | ~60-70 min |
 | **Efficiency** | 0.041 v/e | 0.040-0.045 v/e |
 
