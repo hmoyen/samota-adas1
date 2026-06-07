@@ -443,15 +443,15 @@ def global_search_hybrid(X_array, F_array, uncovered_objectives, pop_size=30, n_
         pop_X = res.X if isinstance(res.X, list) else list(res.X)  # Population
 
     for x in pop_X:
-        # Extract 6 parameters: car_speed, p_x, p_y, orientation, weather, road_shape
+        # Extract 6 parameters in ALPHABETICALLY SORTED order (matches surrogate training!)
+        var_names_gs = sorted(conf.SS_VARIABLES.keys())
         if isinstance(x, dict):
             # Solution is a dictionary (from mixed variables)
-            params = np.array([float(x["car_speed"]), float(x["p_x"]), float(x["p_y"]),
-                               int(x["orientation"]), int(x["weather"]), int(x["road_shape"])])
+            params = np.array([x[var] if conf.SS_VARIABLES[var]["domain"] == float else int(x[var])
+                             for var in var_names_gs])
         else:
-            # Solution is an array
-            params = np.array([float(x[0]), float(x[1]), float(x[2]),
-                               int(x[3]), int(x[4]), int(x[5])])
+            # Solution is an array - assume it's in alphabetically sorted order from NSGA3
+            params = np.array(x)
 
         # For each objective, track best and most uncertain candidates
         for obj_idx in uncovered_objectives:
@@ -487,16 +487,14 @@ def global_search_hybrid(X_array, F_array, uncovered_objectives, pop_size=30, n_
         if not any(np.allclose(params, existing) for existing in unique_params):
             unique_params.append(params)
 
-    # Convert to dict format
+    # Convert to dict format using ALPHABETICALLY SORTED order (matches params array order!)
+    var_names_convert = sorted(conf.SS_VARIABLES.keys())
     candidates = []
     for params in unique_params:
         candidates.append({
-            "car_speed": float(params[0]),
-            "p_x": float(params[1]),
-            "p_y": float(params[2]),
-            "orientation": int(params[3]),
-            "weather": int(params[4]),
-            "road_shape": int(params[5]),
+            var_name: (float(params[i]) if conf.SS_VARIABLES[var_name]["domain"] == float
+                      else int(params[i]))
+            for i, var_name in enumerate(var_names_convert)
         })
 
     return candidates
