@@ -100,8 +100,13 @@ def main(size, niterations, nruns, optalg, verbose, logdir, seed):
     VERBOSE = verbose
     LOGDIR = logdir
     
-    NREQS = len(conf.CONSTRAINTS)  # 3 requirements (R0, R1, R2)
-    OBJECTIVES = 5  # From MINIMAL_CONSTRAINTS: S0.a (2 bounds) + S2.b (3 elements) = 5 objectives
+    NREQS = len(conf.CONSTRAINTS)
+    # Compute OBJECTIVES dynamically from MINIMAL_CONSTRAINTS structure
+    # Each constraint maps to one or more objectives depending on bounds structure
+    OBJECTIVES = sum(
+        len(bounds) for state_constraints in conf.MINIMAL_CONSTRAINTS.values()
+        for bounds in state_constraints.values()
+    ) if isinstance(conf.MINIMAL_CONSTRAINTS, dict) else 5
 
     uns_reqs_df = pd.DataFrame(columns=[f'R{j}' for j in range(0, NREQS)] + ["conjunction"])
     score_df = pd.DataFrame(columns=[f'V{j}' for j in range(0, OBJECTIVES)])
