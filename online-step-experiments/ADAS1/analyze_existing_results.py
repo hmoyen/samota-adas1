@@ -95,31 +95,25 @@ def analyze_results(name, results):
     else:
         print(f"\n⚠️  Could not load F_all_evaluations file")
 
-    # Count violations from detailed requirements
-    if results['reqs_all'] is not None:
-        total_violations = results['reqs_all'].sum().sum()
-        print(f"📊 Total Violations Found: {int(total_violations)}")
-        analysis['violations'] = int(total_violations)
-
-        print(f"\n   Violations per constraint:")
-        for col in results['reqs_all'].columns:
-            col_sum = results['reqs_all'][col].sum()
-            print(f"     {col}: {int(col_sum)}")
-    else:
-        print(f"\n⚠️  Reqs_all_evaluations file not found - cannot count detailed violations")
-        print(f"     (PFES+SAMOTA may not save this file)")
-
-    # Count violations from summary if available
-    if results['reqs_summary'] is not None and results['reqs_all'] is None:
-        print(f"\n   Using summary requirements file:")
+    # Count violations from SUMMARY file (most reliable)
+    if results['reqs_summary'] is not None:
+        print(f"\n   Violations per constraint (from summary file):")
         for col in results['reqs_summary'].columns:
             val = results['reqs_summary'][col].iloc[0]
             print(f"     {col}: {int(val)}")
-        # Try to sum it
+
+        # Use conjunction (total) if available, otherwise sum constraint columns
         if 'conjunction' in results['reqs_summary'].columns:
             total_viol = results['reqs_summary']['conjunction'].iloc[0]
-            analysis['violations'] = int(total_viol)
-            print(f"   📊 Total Violations: {int(total_viol)}")
+        else:
+            # Sum all non-conjunction columns
+            cols_to_sum = [c for c in results['reqs_summary'].columns if c != 'conjunction']
+            total_viol = results['reqs_summary'][cols_to_sum].iloc[0].sum()
+
+        analysis['violations'] = int(total_viol)
+        print(f"\n📊 Total Violations Found: {int(total_viol)}")
+    else:
+        print(f"\n⚠️  Requirements summary file (reqs_NSGA3_*.csv) not found")
 
     # Efficiency
     if 'evaluations' in analysis and 'violations' in analysis:
