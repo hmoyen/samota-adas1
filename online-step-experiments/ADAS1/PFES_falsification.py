@@ -54,14 +54,12 @@ class AutonomousDrivingProblem(ElementwiseProblem):
         super().__init__(vars=variables, n_obj=n_objectives, **kwargs)
 
     def _evaluate(self, x, out, *args, **kwargs):
-        _, scores, reqs_satisfied, conjunction = helpers.run_mdp([x["car_speed"],
-                                                        x["p_x"],
-                                                        x["p_y"],
-                                                        x["orientation"],
-                                                        x["weather"],
-                                                        x["road_shape"]])
-        # Store all evaluations
-        self.all_X.append([x["car_speed"], x["p_x"], x["p_y"], x["orientation"], x["weather"], x["road_shape"]])
+        # Extract parameters in insertion order (not hardcoded) to match create_ss_variables()
+        var_names = list(conf.SS_VARIABLES.keys())
+        params = [x[var] for var in var_names]
+        _, scores, reqs_satisfied, conjunction = helpers.run_mdp(params)
+        # Store all evaluations (also in insertion order)
+        self.all_X.append([x[var] for var in var_names])
         self.all_F.append(scores)
         self.all_reqs.append(reqs_satisfied)
 
