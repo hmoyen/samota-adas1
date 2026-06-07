@@ -22,7 +22,8 @@ import config as conf
 
 def create_ss_variables(ss_variables: dict, input_variables: np.ndarray) -> dict:
     variables_to_exec = dict()
-    for index, (key, value) in enumerate(ss_variables.items()):
+    for index, key in enumerate(sorted(ss_variables.keys())):
+        value = ss_variables[key]
         variables_to_exec.update({key: value['domain'](input_variables[index])})
 
     return variables_to_exec
@@ -33,7 +34,8 @@ def build_random_combinations(expected_maximum):
 
     while len(combinations) < expected_maximum:
         new_combination = list()
-        for key, variable in conf.SS_VARIABLES.items():
+        for key in sorted(conf.SS_VARIABLES.keys()):
+            variable = conf.SS_VARIABLES[key]
             bound = variable['range']
             domain = variable['domain']
             if domain is int:
