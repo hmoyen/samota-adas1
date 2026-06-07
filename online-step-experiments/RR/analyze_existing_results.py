@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Compare existing PFES vs PFES+SAMOTA results from CSV files
-No need to run experiments - just analyze existing results!
+Handles missing files gracefully
 """
 
 import pandas as pd
@@ -26,8 +26,10 @@ def load_results(directory):
     ]
 
     reqs_files = [
-        f'{directory}/Reqs_all_evaluations_NSGA3_0.csv',
+        f'{directory}/Reqs_all_evaluations_NSGA3_0.csv',  # Capital R
+        f'{directory}/reqs_all_evaluations_NSGA3_0.csv',  # Lowercase r
         f'{directory}/Reqs_all_evaluations_NSGA3_1.csv',
+        f'{directory}/reqs_all_evaluations_NSGA3_1.csv',
     ]
 
     score_files = [
@@ -51,7 +53,7 @@ def load_results(directory):
             results['F_all'] = pd.read_csv(f_file)
             break
 
-    # Load Reqs (requirements/violations)
+    # Load Reqs (requirements/violations) - detailed per-evaluation
     for reqs_file in reqs_files:
         if os.path.exists(reqs_file):
             results['reqs_all'] = pd.read_csv(reqs_file)
@@ -90,19 +92,34 @@ def analyze_results(name, results):
         n_evals = len(results['F_all'])
         print(f"\n📊 Total Evaluations: {n_evals}")
         analysis['evaluations'] = n_evals
+    else:
+        print(f"\n⚠️  Could not load F_all_evaluations file")
 
-    # Count violations
+    # Count violations from detailed requirements
     if results['reqs_all'] is not None:
-        # Sum all violations (each row is one evaluation, each column is one requirement)
         total_violations = results['reqs_all'].sum().sum()
         print(f"📊 Total Violations Found: {int(total_violations)}")
         analysis['violations'] = int(total_violations)
 
-        # Violations per constraint
         print(f"\n   Violations per constraint:")
         for col in results['reqs_all'].columns:
             col_sum = results['reqs_all'][col].sum()
             print(f"     {col}: {int(col_sum)}")
+    else:
+        print(f"\n⚠️  Reqs_all_evaluations file not found - cannot count detailed violations")
+        print(f"     (PFES+SAMOTA may not save this file)")
+
+    # Count violations from summary if available
+    if results['reqs_summary'] is not None and results['reqs_all'] is None:
+        print(f"\n   Using summary requirements file:")
+        for col in results['reqs_summary'].columns:
+            val = results['reqs_summary'][col].iloc[0]
+            print(f"     {col}: {int(val)}")
+        # Try to sum it
+        if 'conjunction' in results['reqs_summary'].columns:
+            total_viol = results['reqs_summary']['conjunction'].iloc[0]
+            analysis['violations'] = int(total_viol)
+            print(f"   📊 Total Violations: {int(total_viol)}")
 
     # Efficiency
     if 'evaluations' in analysis and 'violations' in analysis:
@@ -119,8 +136,6 @@ def analyze_results(name, results):
 
     # Objectives covered
     if results['reqs_all'] is not None:
-        # An objective is "covered" if there's at least one violation
-        # (meaning we found a test case that violates it)
         objectives_with_violations = (results['reqs_all'].sum() > 0).sum()
         total_objectives = len(results['reqs_all'].columns)
         print(f"\n🎯 Objectives Covered: {objectives_with_violations}/{total_objectives}")
@@ -138,25 +153,29 @@ def compare_results(pfes_analysis, samota_analysis):
         pfes_evals = pfes_analysis['evaluations']
         samota_evals = samota_analysis['evaluations']
 
-        print(f"Evaluations Used:")
+        print(f"📊 Evaluations Used:")
         print(f"  PFES:        {pfes_evals}")
         print(f"  PFES+SAMOTA: {samota_evals}")
         print(f"  Difference:  {abs(pfes_evals - samota_evals)} ({abs(pfes_evals - samota_evals)/max(pfes_evals, samota_evals)*100:.1f}%)")
+
+        if samota_evals < pfes_evals:
+            budget_saved = (pfes_evals - samota_evals) / pfes_evals * 100
+            print(f"  ✓ PFES+SAMOTA uses {budget_saved:.1f}% FEWER evaluations!")
 
     if 'violations' in pfes_analysis and 'violations' in samota_analysis:
         pfes_viol = pfes_analysis['violations']
         samota_viol = samota_analysis['violations']
 
-        print(f"\nViolations Found:")
+        print(f"\n📊 Violations Found:")
         print(f"  PFES:        {pfes_viol}")
         print(f"  PFES+SAMOTA: {samota_viol}")
 
         if pfes_viol > samota_viol:
             improvement = (pfes_viol - samota_viol) / pfes_viol * 100
-            print(f"  ✓ PFES+SAMOTA found {improvement:.1f}% MORE violations (better!)")
+            print(f"  ⚠️  PFES+SAMOTA found {improvement:.1f}% FEWER violations")
         elif samota_viol > pfes_viol:
-            regression = (samota_viol - pfes_viol) / samota_viol * 100
-            print(f"  ⚠️  PFES+SAMOTA found {regression:.1f}% FEWER violations")
+            improvement = (samota_viol - pfes_viol) / pfes_viol * 100
+            print(f"  ✓ PFES+SAMOTA found {improvement:.1f}% MORE violations (better!)")
         else:
             print(f"  = Same violations found")
 
@@ -164,7 +183,7 @@ def compare_results(pfes_analysis, samota_analysis):
         pfes_eff = pfes_analysis['efficiency']
         samota_eff = samota_analysis['efficiency']
 
-        print(f"\nEfficiency (violations per evaluation):")
+        print(f"\n⚡ Efficiency (violations per evaluation):")
         print(f"  PFES:        {pfes_eff:.4f}")
         print(f"  PFES+SAMOTA: {samota_eff:.4f}")
 
@@ -176,6 +195,8 @@ def compare_results(pfes_analysis, samota_analysis):
             print(f"  ⚠️  PFES+SAMOTA is {slowdown:.2f}x LESS efficient")
         else:
             print(f"  = Same efficiency")
+    elif 'violations' in pfes_analysis and 'violations' not in samota_analysis:
+        print(f"\n⚠️  Cannot calculate efficiency - PFES+SAMOTA violations file missing")
 
 def main():
     import argparse
