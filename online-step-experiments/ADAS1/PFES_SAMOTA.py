@@ -704,17 +704,16 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
             break
 
         # Evaluate via simulator - get RAW outputs (not distances!)
-        params = [
-            test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-            test_case["orientation"], test_case["weather"], test_case["road_shape"]
-        ]
+        # CRITICAL: Must use ALPHABETICALLY SORTED order to match helpers.create_ss_variables()
+        var_names = sorted(conf.SS_VARIABLES.keys())
+        params = [test_case[var] for var in var_names]
         raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 
         eval_count += 1
 
         # Store in database (using RAW estimates for surrogates!)
-        x_array = np.array([test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                           test_case["orientation"], test_case["weather"], test_case["road_shape"]])
+        # CRITICAL: Must use ALPHABETICALLY SORTED order to match helpers.create_ss_variables()
+        x_array = np.array([test_case[var] for var in var_names])
         database.append(test_case)
         database_X.append(x_array)
         database_F.append(raw_estimates)  # ← Constraint-mapped fitness (processed_scores)
@@ -816,16 +815,14 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
                 break
 
             # Evaluate and get RAW simulator outputs (not distances!)
-            params = [
-                test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                test_case["orientation"], test_case["weather"], test_case["road_shape"]
-            ]
+            # CRITICAL: Must use ALPHABETICALLY SORTED order to match helpers.create_ss_variables()
+            var_names_local = sorted(conf.SS_VARIABLES.keys())
+            params = [test_case[var] for var in var_names_local]
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 
             eval_count += 1
 
-            x_array = np.array([test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                               test_case["orientation"], test_case["weather"], test_case["road_shape"]])
+            x_array = np.array([test_case[var] for var in var_names_local])
             database.append(test_case)
             database_X.append(x_array)
             database_F.append(raw_estimates)  # ← Constraint-mapped fitness (processed_scores)
@@ -867,16 +864,14 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
                 break
 
             # Evaluate and get RAW simulator outputs (not distances!)
-            params = [
-                test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                test_case["orientation"], test_case["weather"], test_case["road_shape"]
-            ]
+            # CRITICAL: Must use ALPHABETICALLY SORTED order to match helpers.create_ss_variables()
+            var_names_local = sorted(conf.SS_VARIABLES.keys())
+            params = [test_case[var] for var in var_names_local]
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 
             eval_count += 1
 
-            x_array = np.array([test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                               test_case["orientation"], test_case["weather"], test_case["road_shape"]])
+            x_array = np.array([test_case[var] for var in var_names_local])
             database.append(test_case)
             database_X.append(x_array)
             database_F.append(raw_estimates)  # ← Constraint-mapped fitness (processed_scores)
