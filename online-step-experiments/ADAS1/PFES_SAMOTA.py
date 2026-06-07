@@ -652,6 +652,28 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
     print("PFES + SAMOTA INTEGRATION")
     print("="*80)
 
+    # Create detailed log file
+    import logging
+    log_file = "pfes_samota_baseline/samota_detailed.log"
+    os.makedirs("pfes_samota_baseline", exist_ok=True)
+
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        filemode='w'
+    )
+    logger = logging.getLogger(__name__)
+
+    logger.info("="*80)
+    logger.info("PFES + SAMOTA DETAILED LOG")
+    logger.info("="*80)
+    logger.info(f"Budget: {budget} evaluations")
+    logger.info(f"Max iterations: {max_iterations}")
+    logger.info(f"Max time: {max_time_seconds} seconds")
+    logger.info(f"Constraints: {len(conf.CONSTRAINTS)}")
+    logger.info(f"MINIMAL_CONSTRAINTS objectives: {len(conf.MINIMAL_CONSTRAINTS)}")
+
     start_time = time.time()
     archive = []  # Test cases that violate at least one requirement
     database = []  # All evaluated test cases
@@ -664,17 +686,24 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
 
     eval_count = 0
 
+    print(f"📝 Logging to: {log_file}")
+
     # ========================================================================
     # PHASE 1: ADAPTIVE RANDOM TESTING (ART)
     # ========================================================================
 
     print("\nPHASE 1: ADAPTIVE RANDOM TESTING (ART) - Maximin Sampling")
     print("-" * 80)
+    logger.info("PHASE 1: ADAPTIVE RANDOM TESTING (ART)")
 
     art_pop, art_X = art_initial_population(size=300)
+    logger.info(f"ART population generated: {len(art_pop)} samples")
+
+    phase1_start_evals = eval_count
 
     for i, test_case in enumerate(art_pop):
         if time.time() - start_time > max_time_seconds or eval_count >= budget:
+            logger.warning(f"PHASE 1 STOPPED at iteration {i}: eval_count={eval_count}, budget={budget}, time_elapsed={(time.time()-start_time):.1f}s")
             break
 
         # Evaluate via simulator - get RAW outputs (not distances!)
@@ -705,8 +734,11 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
 
         if (i + 1) % 50 == 0:
             print(f"  Evaluated {i+1}/300 ART samples... (evals: {eval_count})")
+            logger.debug(f"  ART progress: {i+1}/300, evals: {eval_count}, violations found: {len(archive)}")
 
-    print(f"✓ Phase 1 complete: {len(database)} evaluations, {len(archive)} violations found")
+    phase1_evals = eval_count - phase1_start_evals
+    print(f"✓ Phase 1 complete: {phase1_evals} evaluations, {len(archive)} violations found")
+    logger.info(f"✓ Phase 1 complete: {phase1_evals} ART evaluations, {len(archive)} violations found")
 
     X_array = np.array(database_X)
     F_array = np.array(database_F)  # RAW estimates (for surrogates)
@@ -718,27 +750,50 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
 
     print("\nPHASE 2: ITERATIVE GS + LS")
     print("-" * 80)
+    logger.info("PHASE 2: ITERATIVE GS + LS")
 
     n_objectives = len(database_F[0]) if database_F else len(conf.CONSTRAINTS)
+    logger.info(f"Number of objectives: {n_objectives}")
     uncovered_objectives = list(range(n_objectives))
 
     for iteration in range(max_iterations):
-        if time.time() - start_time > max_time_seconds or eval_count >= budget:
-            print(f"✓ Budget or time limit reached at iteration {iteration}")
+        elapsed_time = time.time() - start_time
+
+        logger.info(f"\n--- ITERATION {iteration + 1} ---")
+        logger.info(f"Current eval_count: {eval_count}/{budget}")
+        logger.info(f"Elapsed time: {elapsed_time:.1f}s / {max_time_seconds}s")
+
+        if elapsed_time > max_time_seconds:
+            logger.warning(f"⏱️  TIME LIMIT REACHED at iteration {iteration}")
+            print(f"✓ Time limit reached at iteration {iteration}")
+            break
+
+        if eval_count >= budget:
+            logger.warning(f"💰 BUDGET EXHAUSTED at iteration {iteration}: eval_count={eval_count} >= budget={budget}")
+            print(f"✓ Budget exhausted at iteration {iteration}")
             break
 
         print(f"\nITERATION {iteration + 1}")
 
         # Update uncovered objectives (those without violations yet)
         # Use PROCESSED scores to check violations (< 0 = violated)
-        min_per_obj_processed = np.min(F_processed, axis=0)
+        F_processed_array = np.array(database_processed)
+        min_per_obj_processed = np.min(F_processed_array, axis=0)
+        covered_objectives = [i for i in range(n_objectives) if min_per_obj_processed[i] < 0]
         uncovered_objectives = [i for i in range(n_objectives) if min_per_obj_processed[i] >= 0]
 
+        logger.info(f"Objective status (min score per objective):")
+        for i in range(n_objectives):
+            status = "✓ COVERED" if i in covered_objectives else "✗ UNCOVERED"
+            logger.info(f"  V{i}: {min_per_obj_processed[i]:.6f} {status}")
+
         if len(uncovered_objectives) == 0:
+            logger.info("✓ ALL OBJECTIVES COVERED - stopping iteration loop")
             print("✓ All objectives covered!")
             break
 
         print(f"  Uncovered objectives: {uncovered_objectives}")
+        logger.info(f"  Uncovered objectives: {uncovered_objectives} ({len(uncovered_objectives)}/{n_objectives})")
 
         # ====================================================================
         # Global Search Phase (PER-OBJECTIVE: one surrogate+GA per uncovered objective)
@@ -749,11 +804,18 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
         # - Result: Focused search per objective (not multi-obj trade-offs)
 
         print(f"  Global Search (GS) - PER-OBJECTIVE (one surrogate+GA per uncovered obj)...")
+        logger.info(f"  Running GS with uncovered objectives: {uncovered_objectives}")
+
+        gs_start_evals = eval_count
         gs_candidates = global_search_nsga3(X_array, F_array, uncovered_objectives,
                                             pop_size=30, n_gen=20)
+        logger.info(f"  GS generated {len(gs_candidates)} candidates")
 
-        for test_case in gs_candidates:
+        gs_violations_before = len(archive)
+
+        for gs_idx, test_case in enumerate(gs_candidates):
             if eval_count >= budget:
+                logger.warning(f"  GS stopped at candidate {gs_idx}/{len(gs_candidates)}: budget exhausted")
                 break
 
             # Evaluate and get RAW simulator outputs (not distances!)
@@ -784,17 +846,27 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
         F_array = np.array(database_F)  # RAW estimates for surrogates
         F_processed = np.array(database_processed)  # Processed for violation checks
 
-        print(f"    GS: {len(gs_candidates)} candidates, {len(archive)} total violations")
+        gs_evals_used = eval_count - gs_start_evals
+        gs_violations_found = len(archive) - gs_violations_before
+        print(f"    GS: {len(gs_candidates)} candidates generated, {gs_evals_used} evaluated, {gs_violations_found} new violations")
+        logger.info(f"    GS: {len(gs_candidates)} candidates, {gs_evals_used} evals, {gs_violations_found} new violations, total violations: {len(archive)}")
 
         # ====================================================================
         # Local Search Phase
         # ====================================================================
 
         print(f"  Local Search (LS)...")
-        ls_candidates = local_search_phase(X_array, F_array, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20)
+        logger.info(f"  Running LS with uncovered objectives: {uncovered_objectives}")
 
-        for test_case in ls_candidates:
+        ls_start_evals = eval_count
+        ls_candidates = local_search_phase(X_array, F_array, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20)
+        logger.info(f"  LS generated {len(ls_candidates)} candidates")
+
+        ls_violations_before = len(archive)
+
+        for ls_idx, test_case in enumerate(ls_candidates):
             if eval_count >= budget:
+                logger.warning(f"  LS stopped at candidate {ls_idx}/{len(ls_candidates)}: budget exhausted")
                 break
 
             # Evaluate and get RAW simulator outputs (not distances!)
@@ -825,8 +897,12 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
         F_array = np.array(database_F)  # RAW estimates
         F_processed = np.array(database_processed)  # Processed scores
 
-        print(f"    LS: {len(ls_candidates)} candidates, {len(archive)} total violations")
+        ls_evals_used = eval_count - ls_start_evals
+        ls_violations_found = len(archive) - ls_violations_before
+        print(f"    LS: {len(ls_candidates)} candidates generated, {ls_evals_used} evaluated, {ls_violations_found} new violations")
+        logger.info(f"    LS: {len(ls_candidates)} candidates, {ls_evals_used} evals, {ls_violations_found} new violations, total violations: {len(archive)}")
         print(f"    Total evals: {eval_count}")
+        logger.info(f"  ITERATION {iteration + 1} COMPLETE: evals_used={(eval_count-phase1_evals)}, total_evals={eval_count}")
 
     # ========================================================================
     # RESULTS
@@ -842,16 +918,41 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
     print("\n" + "="*80)
     print("PFES + SAMOTA RESULTS")
     print("="*80)
+    logger.info("="*80)
+    logger.info("PFES + SAMOTA FINAL RESULTS")
+    logger.info("="*80)
+
     print(f"Total Time: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
-    print(f"Total Evaluations: {eval_count}")
+    print(f"Total Evaluations: {eval_count} / {budget} ({eval_count/budget*100:.1f}%)")
     print(f"Archive Size: {len(archive)}")
+
+    logger.info(f"Total Time: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
+    logger.info(f"Total Evaluations: {eval_count} / {budget} ({eval_count/budget*100:.1f}%)")
+    logger.info(f"Archive Size: {len(archive)}")
+
     print(f"\nRequirements Breakdown (like PFES baseline):")
+    logger.info(f"\nRequirements Breakdown:")
     for i, req_violations in enumerate(unsatisfied_reqs):
         print(f"  R{i}: {req_violations} violations")
+        logger.info(f"  R{i}: {req_violations} violations")
+
+    print(f"\nObjective Coverage:")
+    logger.info(f"\nObjective Coverage:")
+    for i in range(n_objectives):
+        min_score = min_scores_processed[i]
+        status = "✓ COVERED (negative)" if min_score < 0 else "✗ UNCOVERED (non-negative)"
+        print(f"  V{i}: min_score={min_score:.6f} {status}")
+        logger.info(f"  V{i}: min_score={min_score:.6f} {status}")
+
     print(f"\nTotal Violations: {violations}")
     print(f"Objectives Covered: {objectives_covered}/{n_objectives}")
     print(f"Min Scores: {min_scores}")
     print(f"Efficiency: {violations/eval_count:.4f} violations/eval")
+
+    logger.info(f"\nTotal Violations: {violations}")
+    logger.info(f"Objectives Covered: {objectives_covered}/{n_objectives}")
+    logger.info(f"Min Scores: {list(min_scores)}")
+    logger.info(f"Efficiency: {violations/eval_count:.4f} violations/eval")
 
     # ========================================================================
     # SAVE CSV FILES
