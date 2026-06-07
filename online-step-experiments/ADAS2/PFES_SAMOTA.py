@@ -636,7 +636,7 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
 # MAIN PFES+SAMOTA ALGORITHM
 # ============================================================================
 
-def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
+def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
     """
     PFES + SAMOTA Integration on ADAS1
 
@@ -1013,7 +1013,7 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
 
 
 if __name__ == "__main__":
-    results = pfes_samota(max_iterations=30, budget=1800)
+    results = pfes_samota(max_iterations=1000, budget=900)
 
     print("\n✓ Test completed!")
     print(json.dumps(results, indent=2))
