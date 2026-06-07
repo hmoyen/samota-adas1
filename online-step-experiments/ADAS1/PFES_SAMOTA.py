@@ -34,6 +34,7 @@ import config as conf
 import pandas as pd
 import time
 import json
+import logging
 from scipy.spatial.distance import pdist, squareform
 from pymoo.core.problem import ElementwiseProblem
 from pymoo.core.variable import Real, Integer
@@ -965,13 +966,9 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
         os.makedirs("pfes_samota_baseline", exist_ok=True)
 
     # Save best scores (like PFES: score_NSGA3_1.csv)
-    best_scores_df = pd.DataFrame({
-        'V0': [min_scores[0]],
-        'V1': [min_scores[1]],
-        'V2': [min_scores[2]],
-        'V3': [min_scores[3]],
-        'V4': [min_scores[4]],
-    })
+    # DYNAMIC: Use actual n_objectives, not hardcoded 5
+    best_scores_dict = {f'V{i}': [min_scores[i]] for i in range(n_objectives)}
+    best_scores_df = pd.DataFrame(best_scores_dict)
     best_scores_df.to_csv('pfes_samota_baseline/score_NSGA3_1.csv', index=False)
     print("\n✓ Saved: pfes_samota_baseline/score_NSGA3_1.csv")
 
@@ -993,9 +990,11 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
     X_df.to_csv('pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv")
 
+    # DYNAMIC: Use actual n_objectives, not hardcoded 5
+    f_columns = [f'V{i}' for i in range(n_objectives)]
     F_df = pd.DataFrame(
         database_processed,
-        columns=['V0', 'V1', 'V2', 'V3', 'V4']
+        columns=f_columns
     )
     F_df.to_csv('pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv")
