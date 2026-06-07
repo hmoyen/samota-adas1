@@ -278,7 +278,7 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         return []
 
     from SAMOTA_ensemble import SAMOTAPerObjectiveEnsemble
-    obj_names = ["V0", "V1", "V2", "V3", "V4"]
+    obj_names = [f"V{i}" for i in range(len(conf.CONSTRAINTS))]
     selected_params = []
 
     for obj_idx in uncovered_objectives:
@@ -394,7 +394,7 @@ def global_search_hybrid(X_array, F_array, uncovered_objectives, pop_size=30, n_
     from SAMOTA_ensemble import SAMOTAPerObjectiveEnsemble
 
     # Step 1: Train PER-OBJECTIVE ensembles (specialized)
-    obj_names = ["V0", "V1", "V2", "V3", "V4"]
+    obj_names = [f"V{i}" for i in range(len(conf.CONSTRAINTS))]
     obj_ensembles_dict = {}
 
     for obj_idx in uncovered_objectives:
@@ -956,36 +956,31 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
 
     # Save best scores (like PFES: score_NSGA3_1.csv)
     best_scores_df = pd.DataFrame({
-        'V0': [min_scores[0]],
-        'V1': [min_scores[1]],
-        'V2': [min_scores[2]],
-        'V3': [min_scores[3]],
-        'V4': [min_scores[4]],
+        f'V{i}': [min_scores[i]] for i in range(len(conf.CONSTRAINTS))
     })
     best_scores_df.to_csv('pfes_samota_baseline/score_NSGA3_1.csv', index=False)
     print("\n✓ Saved: pfes_samota_baseline/score_NSGA3_1.csv")
 
     # Save requirements breakdown (like PFES: reqs_NSGA3_1.csv)
-    reqs_df = pd.DataFrame({
-        'R0': [unsatisfied_reqs[0]],
-        'R1': [unsatisfied_reqs[1]],
-        'R2': [unsatisfied_reqs[2]],
-        'conjunction': [violations],
-    })
+    # Dynamic: create one R column per constraint
+    reqs_dict = {f'R{i}': [unsatisfied_reqs[i]] for i in range(len(conf.CONSTRAINTS))}
+    reqs_dict['conjunction'] = [violations]
+    reqs_df = pd.DataFrame(reqs_dict)
     reqs_df.to_csv('pfes_samota_baseline/reqs_NSGA3_1.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/reqs_NSGA3_1.csv")
 
-    # Save all evaluations (like PFES)
+    # Save all evaluations (like PFES) - use alphabetically sorted variable order
+    var_names_save = sorted(conf.SS_VARIABLES.keys())
     X_df = pd.DataFrame(
         database_X,
-        columns=['car_speed', 'p_x', 'p_y', 'orientation', 'weather', 'road_shape']
+        columns=var_names_save
     )
     X_df.to_csv('pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv")
 
     F_df = pd.DataFrame(
         database_processed,
-        columns=['V0', 'V1', 'V2', 'V3', 'V4']
+        columns=[f'V{i}' for i in range(len(conf.CONSTRAINTS))]
     )
     F_df.to_csv('pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv")
