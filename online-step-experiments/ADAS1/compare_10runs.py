@@ -37,10 +37,10 @@ def load_run_metrics(run_dir):
                 df = pd.read_csv(fpath)
                 if 'conjunction' in df.columns:
                     metrics['violations'] = int(df['conjunction'].iloc[0])
-                # Count how many objectives were covered (< 0 = violated)
+                # Count how many objectives were covered (> 0 = violated, i.e., covered)
                 violated_cols = [col for col in df.columns if col.startswith('R')]
                 if violated_cols:
-                    covered = sum(1 for col in violated_cols if df[col].iloc[0] < 0)
+                    covered = sum(1 for col in violated_cols if df[col].iloc[0] > 0)
                     metrics['objectives_covered'] = covered
                 break
             except Exception as e:
