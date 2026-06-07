@@ -959,8 +959,6 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
     # SAVE CSV FILES
     # ========================================================================
 
-    import os
-
     # Create logdir if it doesn't exist
     if not os.path.exists("pfes_samota_baseline"):
         os.makedirs("pfes_samota_baseline", exist_ok=True)
