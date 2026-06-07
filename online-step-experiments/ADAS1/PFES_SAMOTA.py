@@ -182,7 +182,7 @@ def art_initial_population(size=300):
     """
     # Build bounds from config (respects any subject's variable ranges)
     # NOTE: Using insertion order (not sorted) to match create_ss_variables() expectations
-    var_names = list(conf.SS_VARIABLES.keys())
+    var_names = sorted(conf.SS_VARIABLES.keys())
     lb = np.array([conf.SS_VARIABLES[var]["range"][0] for var in var_names])
     ub = np.array([conf.SS_VARIABLES[var]["range"][1] for var in var_names])
 
@@ -703,7 +703,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
 
         # Evaluate via simulator - get RAW outputs (not distances!)
         # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
-        var_names = list(conf.SS_VARIABLES.keys())
+        var_names = sorted(conf.SS_VARIABLES.keys())
         params = [test_case[var] for var in var_names]
         raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 

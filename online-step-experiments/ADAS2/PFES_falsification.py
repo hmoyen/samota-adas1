@@ -55,7 +55,7 @@ class AutonomousDrivingProblem(ElementwiseProblem):
 
     def _evaluate(self, x, out, *args, **kwargs):
         # Extract parameters in insertion order (not hardcoded) to match create_ss_variables()
-        var_names = list(conf.SS_VARIABLES.keys())
+        var_names = sorted(conf.SS_VARIABLES.keys())
         params = [x[var] for var in var_names]
         _, scores, reqs_satisfied, conjunction = helpers.run_mdp(params)
         # Store all evaluations (also in insertion order)
