@@ -14,6 +14,7 @@ def run_pfes_baseline(run_num, size=30, niterations=30, output_base="results_10r
     os.makedirs(output_base, exist_ok=True)
 
     logdir = f"{output_base}/run_{run_num}"
+    os.makedirs(logdir, exist_ok=True)  # Create run-specific directory
 
     cmd = [
         "python3", "PFES_falsification.py",
@@ -47,11 +48,13 @@ def run_pfes_samota(run_num, output_base="results_10runs_samota"):
     if result.returncode == 0:
         # Move results to run directory
         run_dir = f"{output_base}/run_{run_num}"
+        os.makedirs(run_dir, exist_ok=True)  # Create parent directory
 
         # Check where PFES_SAMOTA saves results
         if os.path.exists("pfes_samota_baseline"):
-            shutil.move("pfes_samota_baseline", run_dir)
-            return True, run_dir
+            dest_dir = f"{run_dir}/pfes_samota_baseline"
+            shutil.move("pfes_samota_baseline", dest_dir)
+            return True, dest_dir
         else:
             print(f"⚠️  Could not find PFES+SAMOTA output directory")
             return False, None
