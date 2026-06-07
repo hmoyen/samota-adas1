@@ -120,6 +120,23 @@ conf.PLOT = False
 conf.MAX_SAMPLES = 100
 
 # ============================================================================
+# HELPER: Build pymoo variables dynamically from config
+# ============================================================================
+
+def build_pymoo_variables():
+    """Build pymoo variable definitions from config.SS_VARIABLES"""
+    from pymoo.core.variable import Real, Integer
+    variables = {}
+    for var_name in sorted(conf.SS_VARIABLES.keys()):
+        var_config = conf.SS_VARIABLES[var_name]
+        bounds = tuple(var_config["range"])
+        if var_config["domain"] == float:
+            variables[var_name] = Real(bounds=bounds)
+        else:  # int
+            variables[var_name] = Integer(bounds=bounds)
+    return variables
+
+# ============================================================================
 # PHASE 1: ADAPTIVE RANDOM TESTING (ART) - Maximin Sampling
 # ============================================================================
 
@@ -161,24 +178,25 @@ def art_initial_population(size=300):
     """
     Phase 1: ART - Adaptive Random Testing initialization
     Uses Maximin sampling for maximally diverse population
+    Bounds are read from config.SS_VARIABLES
     """
-    lb = np.array([5.0, 0.0, 0.0, -30, 0, 0])
-    ub = np.array([50.0, 10.0, 10.0, 30, 2, 2])
+    # Build bounds from config (respects any subject's variable ranges)
+    var_names = sorted(conf.SS_VARIABLES.keys())
+    lb = np.array([conf.SS_VARIABLES[var]["range"][0] for var in var_names])
+    ub = np.array([conf.SS_VARIABLES[var]["range"][1] for var in var_names])
 
     # Generate diverse population
     pop = generate_adaptive_random_population(size, lb, ub, n_candidates=500)
 
-    # Convert to dict format for simulator
+    # Convert to dict format for simulator (using alphabetically sorted order)
     test_cases = []
     for x in pop:
-        test_cases.append({
-            "car_speed": x[0],
-            "p_x": x[1],
-            "p_y": x[2],
-            "orientation": int(x[3]),
-            "weather": int(x[4]),
-            "road_shape": int(x[5]),
-        })
+        test_case = {var_names[i]: x[i] for i in range(len(var_names))}
+        # Convert int types
+        for var in var_names:
+            if conf.SS_VARIABLES[var]["domain"] == int:
+                test_case[var] = int(test_case[var])
+        test_cases.append(test_case)
 
     return test_cases, pop
 
@@ -193,20 +211,13 @@ class GSPerObjectiveProblem(ElementwiseProblem):
     Kept for reference - use GSMultiObjectivePerObjectiveSurrogateProblem instead.
     """
     def __init__(self, obj_ensemble, **kwargs):
-        variables = {
-            "car_speed": Real(bounds=(5.0, 50.0)),
-            "p_x": Real(bounds=(0.0, 10.0)),
-            "p_y": Real(bounds=(0.0, 10.0)),
-            "orientation": Integer(bounds=(-30, 30)),
-            "weather": Integer(bounds=(0, 2)),
-            "road_shape": Integer(bounds=(0, 2)),
-        }
+        variables = build_pymoo_variables()
         super().__init__(vars=variables, n_obj=1, **kwargs)
         self.obj_ensemble = obj_ensemble
+        self.var_names = sorted(conf.SS_VARIABLES.keys())
 
     def _evaluate(self, x, out, *args, **kwargs):
-        params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                          x["orientation"], x["weather"], x["road_shape"]])
+        params = np.array([x[var] for var in self.var_names])
         pred, _ = self.obj_ensemble.predict(params)
         out["F"] = np.array([pred])
 
@@ -227,22 +238,15 @@ class GSMultiObjectivePerObjectiveSurrogateProblem(ElementwiseProblem):
             obj_ensembles_dict: Dictionary {obj_idx: SAMOTAPerObjectiveEnsemble}
             uncovered_objectives: List of objective indices to optimize
         """
-        variables = {
-            "car_speed": Real(bounds=(5.0, 50.0)),
-            "p_x": Real(bounds=(0.0, 10.0)),
-            "p_y": Real(bounds=(0.0, 10.0)),
-            "orientation": Integer(bounds=(-30, 30)),
-            "weather": Integer(bounds=(0, 2)),
-            "road_shape": Integer(bounds=(0, 2)),
-        }
+        variables = build_pymoo_variables()
         n_uncovered = len(uncovered_objectives)
         super().__init__(vars=variables, n_obj=n_uncovered, **kwargs)
         self.obj_ensembles_dict = obj_ensembles_dict
         self.uncovered_objectives = uncovered_objectives
+        self.var_names = sorted(conf.SS_VARIABLES.keys())
 
     def _evaluate(self, x, out, *args, **kwargs):
-        params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                          x["orientation"], x["weather"], x["road_shape"]])
+        params = np.array([x[var] for var in self.var_names])
 
         # Get predictions from each per-objective surrogate
         F = []
@@ -506,21 +510,14 @@ class LSProblem(ElementwiseProblem):
     """Local Search: Uses SINGLE RBF surrogate per cluster (NOT ensemble!)"""
 
     def __init__(self, rbf_model, **kwargs):
-        variables = {
-            "car_speed": Real(bounds=(5.0, 50.0)),
-            "p_x": Real(bounds=(0.0, 10.0)),
-            "p_y": Real(bounds=(0.0, 10.0)),
-            "orientation": Integer(bounds=(-30, 30)),
-            "weather": Integer(bounds=(0, 2)),
-            "road_shape": Integer(bounds=(0, 2)),
-        }
+        variables = build_pymoo_variables()
         super().__init__(vars=variables, n_obj=1, **kwargs)
         self.rbf = rbf_model
+        self.var_names = sorted(conf.SS_VARIABLES.keys())
 
     def _evaluate(self, x, out, *args, **kwargs):
         """Evaluate using SINGLE RBF surrogate (trained on cluster data)"""
-        params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                          x["orientation"], x["weather"], x["road_shape"]])
+        params = np.array([x[var] for var in self.var_names])
         # Single RBF prediction (NOT ensemble)
         pred_result = self.rbf.predict(params.reshape(1, -1))
         # Handle both array and scalar returns
