@@ -181,7 +181,8 @@ def art_initial_population(size=300):
     Bounds are read from config.SS_VARIABLES
     """
     # Build bounds from config (respects any subject's variable ranges)
-    var_names = sorted(conf.SS_VARIABLES.keys())
+    # NOTE: Using insertion order (not sorted) to match create_ss_variables() expectations
+    var_names = list(conf.SS_VARIABLES.keys())
     lb = np.array([conf.SS_VARIABLES[var]["range"][0] for var in var_names])
     ub = np.array([conf.SS_VARIABLES[var]["range"][1] for var in var_names])
 
@@ -701,8 +702,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
             break
 
         # Evaluate via simulator - get RAW outputs (not distances!)
-        # CRITICAL: Must use ALPHABETICALLY SORTED order to match helpers.create_ss_variables()
-        var_names = sorted(conf.SS_VARIABLES.keys())
+        # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
+        var_names = list(conf.SS_VARIABLES.keys())
         params = [test_case[var] for var in var_names]
         raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 
@@ -812,8 +813,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
                 break
 
             # Evaluate and get RAW simulator outputs (not distances!)
-            # CRITICAL: Must use ALPHABETICALLY SORTED order to match helpers.create_ss_variables()
-            var_names_local = sorted(conf.SS_VARIABLES.keys())
+            # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
+            var_names_local = list(conf.SS_VARIABLES.keys())
             params = [test_case[var] for var in var_names_local]
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 
@@ -861,8 +862,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
                 break
 
             # Evaluate and get RAW simulator outputs (not distances!)
-            # CRITICAL: Must use ALPHABETICALLY SORTED order to match helpers.create_ss_variables()
-            var_names_local = sorted(conf.SS_VARIABLES.keys())
+            # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
+            var_names_local = list(conf.SS_VARIABLES.keys())
             params = [test_case[var] for var in var_names_local]
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 
