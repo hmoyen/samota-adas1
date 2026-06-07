@@ -1,0 +1,13 @@
+S0; navigating; OBSERVABLE; a, 0.05, S1; a, 0.85, S2; a, 0.1, S4; b, 0.02, S4; b, 0.98, S3;
+S1; contact; OBSERVABLE; c, 1.0, S1;
+S2; human detected; OBSERVABLE; d, 1.0, S5;
+S3; obstacle detected; OBSERVABLE; e, 1.0, S8;
+S4; mis-classification; OBSERVABLE; f, 1.0, S4;
+S5; braking range; OBSERVABLE; g, 0.05, S1; g, 0.1, S6; g, 0.85, S7;
+S6; protective distance violation; OBSERVABLE; h, 0.01, S1; h, 0.99, S7;
+S7; firm; OBSERVABLE; i, 1.0, S7;
+S8; maneuvering; OBSERVABLE; j, 0.6, S9; j, 0.4, S10;
+S9; obstacle avoided; OBSERVABLE; k, 1.0, S9;
+S10; critical distance; OBSERVABLE; l, 0.9, S9; l, 0.1, S11; m, 0.1, S11; m, 0.9, S12;
+S11; crash; OBSERVABLE; n, 1.0, S11;
+S12; emergency stop; OBSERVABLE; o, 1.0, S12;
