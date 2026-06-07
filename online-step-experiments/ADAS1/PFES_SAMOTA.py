@@ -599,29 +599,28 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
                 # Get the first (best) solution
                 best_x = result.X[0] if isinstance(result.X, list) else result.X
 
-                # Handle dict-like access for mixed variables
+                # Handle dict-like access - NSGA3 returns alphabetically sorted variables
+                var_names_ls = sorted(conf.SS_VARIABLES.keys())
                 try:
-                    params = np.array([best_x["car_speed"], best_x["p_x"], best_x["p_y"],
-                                      best_x["orientation"], best_x["weather"], best_x["road_shape"]])
+                    params = np.array([best_x[var] if conf.SS_VARIABLES[var]["domain"] == float else int(best_x[var])
+                                      for var in var_names_ls])
                     selected.append(params)
                 except (TypeError, KeyError):
-                    # If dict access fails, try positional access
+                    # If dict access fails, assume array (shouldn't happen)
                     try:
-                        params = np.array([best_x[0], best_x[1], best_x[2], best_x[3], best_x[4], best_x[5]])
+                        params = np.array(best_x)
                         selected.append(params)
                     except (TypeError, IndexError):
                         pass  # Skip if we can't extract parameters
 
-    # Convert numpy array params to dict format for rest of PFES_SAMOTA
+    # Convert numpy array params to dict format using ALPHABETICALLY SORTED order
+    var_names_convert_ls = sorted(conf.SS_VARIABLES.keys())
     candidates = []
     for params in selected:
         candidates.append({
-            "car_speed": float(params[0]),
-            "p_x": float(params[1]),
-            "p_y": float(params[2]),
-            "orientation": int(params[3]),
-            "weather": int(params[4]),
-            "road_shape": int(params[5]),
+            var_name: (float(params[i]) if conf.SS_VARIABLES[var_name]["domain"] == float
+                      else int(params[i]))
+            for i, var_name in enumerate(var_names_convert_ls)
         })
 
     return candidates
