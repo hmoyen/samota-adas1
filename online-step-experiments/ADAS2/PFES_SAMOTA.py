@@ -954,7 +954,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
 
     # Save best scores (like PFES: score_NSGA3_1.csv)
     best_scores_df = pd.DataFrame({
-        f'V{i}': [min_scores[i]] for i in range(len(conf.CONSTRAINTS))
+        f'V{i}': [min_scores[i]] for i in range(len(min_scores))
     })
     best_scores_df.to_csv('pfes_samota_baseline/score_NSGA3_1.csv', index=False)
     print("\n✓ Saved: pfes_samota_baseline/score_NSGA3_1.csv")
