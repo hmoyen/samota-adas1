@@ -279,7 +279,7 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         return []
 
     from SAMOTA_ensemble import SAMOTAPerObjectiveEnsemble
-    obj_names = [f"V{i}" for i in range(len(conf.CONSTRAINTS))]
+    obj_names = [f"V{i}" for i in range(len(F_array[0]))]
     selected_params = []
 
     for obj_idx in uncovered_objectives:
@@ -395,7 +395,7 @@ def global_search_hybrid(X_array, F_array, uncovered_objectives, pop_size=30, n_
     from SAMOTA_ensemble import SAMOTAPerObjectiveEnsemble
 
     # Step 1: Train PER-OBJECTIVE ensembles (specialized)
-    obj_names = [f"V{i}" for i in range(len(conf.CONSTRAINTS))]
+    obj_names = [f"V{i}" for i in range(len(F_array[0]))]
     obj_ensembles_dict = {}
 
     for obj_idx in uncovered_objectives:
