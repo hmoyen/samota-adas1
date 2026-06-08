@@ -814,7 +814,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
 
             # Evaluate and get RAW simulator outputs (not distances!)
             # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
-            var_names_local = list(conf.SS_VARIABLES.keys())
+            var_names_local = sorted(conf.SS_VARIABLES.keys())
             params = [test_case[var] for var in var_names_local]
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 
@@ -863,7 +863,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
 
             # Evaluate and get RAW simulator outputs (not distances!)
             # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
-            var_names_local = list(conf.SS_VARIABLES.keys())
+            var_names_local = sorted(conf.SS_VARIABLES.keys())
             params = [test_case[var] for var in var_names_local]
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 
