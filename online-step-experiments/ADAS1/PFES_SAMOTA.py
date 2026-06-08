@@ -978,7 +978,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=3600, budget=900):
 
     F_df = pd.DataFrame(
         database_processed,
-        columns=[f'V{i}' for i in range(len(conf.CONSTRAINTS))]
+        columns=[f'V{i}' for i in range(len(database_processed[0]) if database_processed else len(conf.CONSTRAINTS))]
     )
     F_df.to_csv('pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv")
