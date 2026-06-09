@@ -816,7 +816,15 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
             # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
             var_names_local = sorted(conf.SS_VARIABLES.keys())
             params = [test_case[var] for var in var_names_local]
+
+            # Skip if already in database (surrogate may suggest same point repeatedly)
+            x_candidate = np.array(params)
+            if len(database_X) > 0 and any(np.allclose(x_candidate, ex, atol=1e-3) for ex in database_X):
+                logger.info(f"    GS candidate {gs_idx}: SKIPPED (duplicate of existing point)")
+                continue
+
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
+            logger.info(f"    GS candidate {gs_idx}: scores={[f'{s:.6f}' for s in processed_scores]}, violated={[i for i,r in enumerate(reqs_satisfied) if not r]}")
 
             eval_count += 1
 
@@ -840,6 +848,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
 
         gs_evals_used = eval_count - gs_start_evals
         gs_violations_found = len(archive) - gs_violations_before
+        current_best = np.min(np.array(database_processed), axis=0)
+        logger.info(f"    GS post-eval best scores per obj: {[f'V{i}={current_best[i]:.6f}' for i in uncovered_objectives]}")
         print(f"    GS: {len(gs_candidates)} candidates generated, {gs_evals_used} evaluated, {gs_violations_found} new violations")
         logger.info(f"    GS: {len(gs_candidates)} candidates, {gs_evals_used} evals, {gs_violations_found} new violations, total violations: {len(archive)}")
 
@@ -865,7 +875,15 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
             # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
             var_names_local = sorted(conf.SS_VARIABLES.keys())
             params = [test_case[var] for var in var_names_local]
+
+            # Skip if already in database (surrogate may suggest same point repeatedly)
+            x_candidate = np.array(params)
+            if len(database_X) > 0 and any(np.allclose(x_candidate, ex, atol=1e-3) for ex in database_X):
+                logger.info(f"    LS candidate {ls_idx}: SKIPPED (duplicate of existing point)")
+                continue
+
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
+            logger.info(f"    LS candidate {ls_idx}: scores={[f'{s:.6f}' for s in processed_scores]}, violated={[i for i,r in enumerate(reqs_satisfied) if not r]}")
 
             eval_count += 1
 
@@ -889,6 +907,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
 
         ls_evals_used = eval_count - ls_start_evals
         ls_violations_found = len(archive) - ls_violations_before
+        current_best = np.min(np.array(database_processed), axis=0)
+        logger.info(f"    LS post-eval best scores per obj: {[f'V{i}={current_best[i]:.6f}' for i in uncovered_objectives]}")
         print(f"    LS: {len(ls_candidates)} candidates generated, {ls_evals_used} evaluated, {ls_violations_found} new violations")
         logger.info(f"    LS: {len(ls_candidates)} candidates, {ls_evals_used} evals, {ls_violations_found} new violations, total violations: {len(archive)}")
         print(f"    Total evals: {eval_count}")

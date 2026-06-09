@@ -816,6 +816,13 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
             # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
             var_names_local = sorted(conf.SS_VARIABLES.keys())
             params = [test_case[var] for var in var_names_local]
+
+            # Skip if already in database (surrogate may suggest same point repeatedly)
+            x_candidate = np.array(params)
+            if len(database_X) > 0 and any(np.allclose(x_candidate, ex, atol=1e-3) for ex in database_X):
+                logger.info(f"    GS candidate {gs_idx}: SKIPPED (duplicate of existing point)")
+                continue
+
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
             logger.info(f"    GS candidate {gs_idx}: scores={[f'{s:.6f}' for s in processed_scores]}, violated={[i for i,r in enumerate(reqs_satisfied) if not r]}")
 
@@ -869,6 +876,13 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
             # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
             var_names_local = sorted(conf.SS_VARIABLES.keys())
             params = [test_case[var] for var in var_names_local]
+
+            # Skip if already in database (surrogate may suggest same point repeatedly)
+            x_candidate = np.array(params)
+            if len(database_X) > 0 and any(np.allclose(x_candidate, ex, atol=1e-3) for ex in database_X):
+                logger.info(f"    LS candidate {ls_idx}: SKIPPED (duplicate of existing point)")
+                continue
+
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
             logger.info(f"    LS candidate {ls_idx}: scores={[f'{s:.6f}' for s in processed_scores]}, violated={[i for i,r in enumerate(reqs_satisfied) if not r]}")
 
