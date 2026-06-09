@@ -31,13 +31,11 @@ def load_all_runs_detailed(base_dir, num_runs=10):
             if os.path.exists(fpath):
                 try:
                     df = pd.read_csv(fpath)
-                    all_data.append({
-                        'run': run_num,
-                        'R0': df['R0'].iloc[0],
-                        'R1': df['R1'].iloc[0],
-                        'R2': df['R2'].iloc[0],
-                        'total': df['conjunction'].iloc[0],
-                    })
+                    row = {'run': run_num, 'total': df['conjunction'].iloc[0]}
+                    for col in df.columns:
+                        if col.startswith('R'):
+                            row[col] = df[col].iloc[0]
+                    all_data.append(row)
                     break
                 except Exception as e:
                     print(f"Error reading {fpath}: {e}")
@@ -51,20 +49,25 @@ def plot_violations_comparison(pfes_df, samota_df, output_dir="plots"):
     # Prepare data for plotting
     plot_data = []
 
+    req_cols = [c for c in pfes_df.columns if c.startswith('R') and c != 'run']
+
     for _, row in pfes_df.iterrows():
-        for req in ['R0', 'R1', 'R2']:
+        for req in req_cols:
             plot_data.append({'Algorithm': 'PFES', 'Requirement': req, 'Violations': row[req]})
 
     for _, row in samota_df.iterrows():
-        for req in ['R0', 'R1', 'R2']:
+        for req in req_cols:
             plot_data.append({'Algorithm': 'PFES+SAMOTA', 'Requirement': req, 'Violations': row[req]})
 
     df_plot = pd.DataFrame(plot_data)
 
     # Create figure
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+    n_reqs = len(req_cols)
+    fig, axes = plt.subplots(1, n_reqs, figsize=(5 * n_reqs, 5), sharey=True)
+    if n_reqs == 1:
+        axes = [axes]
 
-    for idx, req in enumerate(['R0', 'R1', 'R2']):
+    for idx, req in enumerate(req_cols):
         ax = axes[idx]
         data_req = df_plot[df_plot['Requirement'] == req]
 
@@ -217,7 +220,7 @@ def main():
     print(f"  Loaded {len(pfes_df)} PFES runs")
 
     print("Loading PFES+SAMOTA violations data...")
-    samota_df = load_all_runs_detailed("results_10runs_samota", num_runs=10)
+    samota_df = load_all_runs_detailed("results_10runs_samota_900budget", num_runs=10)
     print(f"  Loaded {len(samota_df)} PFES+SAMOTA runs")
 
     # Load summary results for efficiency metrics
@@ -238,7 +241,7 @@ def main():
     # Load full results for efficiency plots
     from compare_10runs import load_all_runs, compute_statistics
     pfes_full = load_all_runs("results_10runs_pfes", num_runs=10)
-    samota_full = load_all_runs("results_10runs_samota", num_runs=10)
+    samota_full = load_all_runs("results_10runs_samota_900budget", num_runs=10)
     plot_efficiency_comparison(pfes_full, samota_full, "plots")
 
     # Create summary table
