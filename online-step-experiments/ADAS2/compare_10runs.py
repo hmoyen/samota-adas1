@@ -16,6 +16,7 @@ def load_run_metrics(run_dir):
         'violations': None,
         'efficiency': None,
         'objectives_covered': None,
+        'total_objectives': None,
     }
 
     # Try to load evaluation count
@@ -42,6 +43,7 @@ def load_run_metrics(run_dir):
                 if violated_cols:
                     covered = sum(1 for col in violated_cols if df[col].iloc[0] > 0)
                     metrics['objectives_covered'] = covered
+                    metrics['total_objectives'] = len(violated_cols)
                 break
             except Exception as e:
                 print(f"  ⚠️  Error reading {f}: {e}")
@@ -103,7 +105,8 @@ def compute_statistics(results, label):
     print(f"  Max:      {df['efficiency'].max():.4f}")
 
     if 'objectives_covered' in df.columns and df['objectives_covered'].notna().any():
-        print(f"\nObjectives Covered (out of 3):")
+        total = int(df['total_objectives'].dropna().iloc[0]) if 'total_objectives' in df.columns and df['total_objectives'].notna().any() else '?'
+        print(f"\nObjectives Covered (out of {total}):")
         print(f"  Mean:     {df['objectives_covered'].mean():.2f}")
         print(f"  Median:   {df['objectives_covered'].median():.1f}")
 
@@ -147,12 +150,15 @@ def compare_results(pfes_df, samota_df):
     if 'objectives_covered' in pfes_df.columns:
         pfes_cov = pfes_df['objectives_covered'].mean()
         samota_cov = samota_df['objectives_covered'].mean()
-        print(f"  PFES:         {pfes_cov:.2f}/3")
-        print(f"  PFES+SAMOTA:  {samota_cov:.2f}/3")
+        total = int(pfes_df['total_objectives'].dropna().iloc[0]) if 'total_objectives' in pfes_df.columns and pfes_df['total_objectives'].notna().any() else '?'
+        print(f"  PFES:         {pfes_cov:.2f}/{total}")
+        print(f"  PFES+SAMOTA:  {samota_cov:.2f}/{total}")
 
-    # T-test
+    # T-test (drop NaN rows from runs that failed to load)
     from scipy import stats
-    t_stat, p_value = stats.ttest_ind(pfes_df['efficiency'], samota_df['efficiency'])
+    pfes_eff = pfes_df['efficiency'].dropna()
+    samota_eff = samota_df['efficiency'].dropna()
+    t_stat, p_value = stats.ttest_ind(pfes_eff, samota_eff)
     print(f"\nStatistical significance (t-test on efficiency):")
     print(f"  t-statistic: {t_stat:.4f}")
     print(f"  p-value:     {p_value:.4f}")
