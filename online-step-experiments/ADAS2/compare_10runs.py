@@ -203,7 +203,7 @@ def main():
 
     # Load PFES+SAMOTA results
     print("\nLoading PFES+SAMOTA hybrid runs...")
-    samota_results = load_all_runs("results_10runs_samota", num_runs=10)
+    samota_results = load_all_runs("results_10runs_samota_900budget", num_runs=10)
 
     # Compute statistics
     pfes_df = compute_statistics(pfes_results, "PFES BASELINE")
