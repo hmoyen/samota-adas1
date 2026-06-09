@@ -149,34 +149,43 @@ def create_summary_table(pfes_df, samota_df, output_dir="plots"):
     """Create summary statistics table as image"""
     os.makedirs(output_dir, exist_ok=True)
 
-    # Calculate statistics
+    # Compute objectives covered dynamically from R columns
+    req_cols = [c for c in pfes_df.columns if c.startswith('R') and c != 'run']
+    n_objectives = len(req_cols)
+
+    pfes_obj = pfes_df[req_cols].gt(0).sum(axis=1)
+    samota_obj = samota_df[req_cols].gt(0).sum(axis=1) if len(samota_df) > 0 else pd.Series([], dtype=float)
+
+    pfes_eff = pfes_df['total'] / 900
+    samota_eff = samota_df['total'] / 900 if len(samota_df) > 0 else pd.Series([], dtype=float)
+
     summary_data = {
         'Metric': [
-            'Mean Evaluations',
-            'Std Evaluations',
             'Mean Violations',
             'Std Violations',
-            'Mean Efficiency',
+            'Mean Efficiency (v/eval)',
             'Std Efficiency',
-            'Mean Objectives Covered',
+            f'Mean Objectives Covered (/{n_objectives})',
+            f'Min Objectives Covered',
+            f'Max Objectives Covered',
         ],
         'PFES': [
             f"{pfes_df['total'].mean():.1f}",
             f"{pfes_df['total'].std():.1f}",
-            "~35.5",
-            "~12.2",
-            "0.0394",
-            "0.0135",
-            "1.20/3",
+            f"{pfes_eff.mean():.4f}",
+            f"{pfes_eff.std():.4f}",
+            f"{pfes_obj.mean():.2f}",
+            f"{pfes_obj.min()}",
+            f"{pfes_obj.max()}",
         ],
         'PFES+SAMOTA': [
-            f"{samota_df['total'].mean():.1f}",
-            f"{samota_df['total'].std():.1f}",
-            "~13.1",
-            "~5.8",
-            "0.0236",
-            "0.0115",
-            "2.60/3",
+            f"{samota_df['total'].mean():.1f}" if len(samota_df) > 0 else 'N/A',
+            f"{samota_df['total'].std():.1f}" if len(samota_df) > 0 else 'N/A',
+            f"{samota_eff.mean():.4f}" if len(samota_df) > 0 else 'N/A',
+            f"{samota_eff.std():.4f}" if len(samota_df) > 0 else 'N/A',
+            f"{samota_obj.mean():.2f}" if len(samota_df) > 0 else 'N/A',
+            f"{samota_obj.min()}" if len(samota_df) > 0 else 'N/A',
+            f"{samota_obj.max()}" if len(samota_df) > 0 else 'N/A',
         ]
     }
 
