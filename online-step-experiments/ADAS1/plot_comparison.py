@@ -135,8 +135,9 @@ def plot_efficiency_comparison(pfes_results, samota_results, output_dir="plots")
 
     # Objectives Covered
     sns.boxplot(data=df_plot, x='Algorithm', y='Objectives', ax=axes[1, 1], palette=['#1f77b4', '#ff7f0e'])
-    axes[1, 1].set_title('Objectives Covered (out of 3)', fontweight='bold')
-    axes[1, 1].set_ylim(0, 3.2)
+    max_obj = int(df_plot['Objectives'].dropna().max()) if df_plot['Objectives'].notna().any() else 6
+    axes[1, 1].set_title(f'Objectives Covered (out of {max_obj})', fontweight='bold')
+    axes[1, 1].set_ylim(0, max_obj + 0.5)
     axes[1, 1].grid(axis='y', alpha=0.3)
 
     plt.tight_layout()
