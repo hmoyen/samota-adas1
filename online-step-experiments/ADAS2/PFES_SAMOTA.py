@@ -261,7 +261,7 @@ class GSMultiObjectivePerObjectiveSurrogateProblem(ElementwiseProblem):
         out["F"] = np.array(F)
 
 
-def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=50, top_k=5):
+def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=50, top_k=1):
     """
     Phase 2a: Global Search - PER-OBJECTIVE surrogate + single-objective GA.
 
@@ -269,11 +269,12 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
       1. Train a separate SAMOTAPerObjectiveEnsemble (GP + Poly + RBF) on that objective's data
       2. Run single-objective NSGA3 to minimize predicted score for that objective
       3. From GA population, select:
-         * Best (lowest predicted score) for this objective
-         * Most uncertain (highest surrogate disagreement) for this objective
-    Result: up to 2 x num_uncovered candidates (best + uncertain per objective)
+         * Best (lowest predicted score) for this objective  [top_k=1 per paper]
+         * Most uncertain (highest surrogate disagreement) for this objective  [top_k=1 per paper]
+    Result: exactly 2 x |uncovered_objectives| candidates (paper Algorithm 3: |T_g| <= |U| x 2)
 
-    Mirrors LS design: per-objective surrogate, per-objective optimization.
+    Paper reference: Algorithm 3, line 12: return T_b ∪ T_n
+    where T_b = 1 best per objective, T_n = 1 most uncertain per objective.
     """
     if len(uncovered_objectives) == 0:
         return []
@@ -791,7 +792,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
 
         gs_start_evals = eval_count
         gs_candidates = global_search_nsga3(X_array, F_array, uncovered_objectives,
-                                            pop_size=30, n_gen=50, top_k=5)
+                                            pop_size=30, n_gen=50, top_k=1)
         logger.info(f"  GS generated {len(gs_candidates)} candidates")
 
         gs_violations_before = len(archive)
