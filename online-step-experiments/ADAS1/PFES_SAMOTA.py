@@ -261,7 +261,7 @@ class GSMultiObjectivePerObjectiveSurrogateProblem(ElementwiseProblem):
         out["F"] = np.array(F)
 
 
-def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=20):
+def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=50, top_k=5):
     """
     Phase 2a: Global Search - PER-OBJECTIVE surrogate + single-objective GA.
 
@@ -308,11 +308,6 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         if res.X is None:
             continue
 
-        best_params = None
-        best_score = np.inf
-        uncertain_params = None
-        best_uncertainty = -np.inf
-
         # Handle dict (single solution), 1D array, or 2D array/list (population)
         if isinstance(res.X, dict):
             pop_X = [res.X]  # Single dict solution
@@ -321,32 +316,26 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         else:
             pop_X = res.X if isinstance(res.X, list) else list(res.X)  # Population
 
+        # Extract all population members with their predicted score and uncertainty
+        var_names_extract = sorted(conf.SS_VARIABLES.keys())
+        scored_pop = []
         for x in pop_X:
-            # Extract parameters in ALPHABETICALLY SORTED order (matches build_pymoo_variables!)
-            var_names_extract = sorted(conf.SS_VARIABLES.keys())
             if isinstance(x, dict):
-                # Solution is a dictionary (from mixed variables)
                 params = np.array([x[var] if conf.SS_VARIABLES[var]["domain"] == float else int(x[var])
                                    for var in var_names_extract])
             else:
-                # Solution is an array - already in alphabetically sorted order from NSGA3
                 params = np.array(x)
-
             pred, unc = obj_ensemble.predict(params.reshape(1, -1))
+            scored_pop.append((params, pred, unc))
 
-            if pred < best_score:
-                best_score = pred
-                best_params = params
+        # Select top-K by predicted score (exploitation) + top-K by uncertainty (exploration)
+        scored_pop.sort(key=lambda t: t[1])  # sort by predicted score ascending
+        for params, pred, unc in scored_pop[:top_k]:
+            selected_params.append(params)
 
-            if unc > best_uncertainty:
-                best_uncertainty = unc
-                uncertain_params = params
-
-        if best_params is not None:
-            selected_params.append(best_params)
-
-        if uncertain_params is not None and not np.allclose(uncertain_params, best_params):
-            selected_params.append(uncertain_params)
+        scored_pop.sort(key=lambda t: t[2], reverse=True)  # sort by uncertainty descending
+        for params, pred, unc in scored_pop[:top_k]:
+            selected_params.append(params)
 
     # Remove duplicates across objectives
     unique_params = []
@@ -802,7 +791,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
 
         gs_start_evals = eval_count
         gs_candidates = global_search_nsga3(X_array, F_array, uncovered_objectives,
-                                            pop_size=30, n_gen=20)
+                                            pop_size=30, n_gen=50, top_k=5)
         logger.info(f"  GS generated {len(gs_candidates)} candidates")
 
         gs_violations_before = len(archive)
