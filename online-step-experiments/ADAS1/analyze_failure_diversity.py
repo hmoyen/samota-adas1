@@ -344,3 +344,222 @@ plt.close()
 print(f"Saved: {out3}")
 
 print("\nDone. All plots saved to:", OUTPUT_DIR)
+
+
+# ============================================================
+# OBJECTIVE-SPACE DIVERSITY
+# Measures diversity of TYPES of safety violations, not just
+# where in parameter space they occur.
+#
+# Two metrics:
+#   1. Violation Pattern Diversity: each failure = binary vector
+#      [V0<0, V1<0, V2<0, V3<0, V4<0]. APD using Hamming distance.
+#      Answers: "do we find violations in different objectives?"
+#
+#   2. Violation Severity APD: pairwise distance on actual score
+#      values (only violated objectives, i.e. score < 0).
+#      Answers: "are the violations of different severity?"
+#
+# Reference: objective-space diversity used in multi-objective
+# test generation -- Panichella et al. (2018), "Automated Test
+# Case Generation as a Many-Objective Optimisation Problem with
+# Dynamic Selection of the Targets", IEEE TSE.
+# ============================================================
+print("\n\n" + "=" * 65)
+print("OBJECTIVE-SPACE DIVERSITY ANALYSIS")
+print("=" * 65)
+
+OBJ_NAMES = ["V0", "V1", "V2", "V3", "V4"]
+N_OBJ = len(OBJ_NAMES)
+
+
+def get_failure_scores(X, F):
+    """Return F rows where at least one score is negative."""
+    mask = np.any(F < 0, axis=1)
+    return F[mask]
+
+
+def violation_pattern(F_fail):
+    """Binary matrix: 1 where score < 0 (violated), 0 otherwise."""
+    return (F_fail < 0).astype(float)
+
+
+def hamming_apd(patterns):
+    """Average pairwise Hamming distance between binary violation patterns."""
+    n = patterns.shape[0]
+    if n < 2:
+        return 0.0
+    dists = [
+        np.sum(patterns[i] != patterns[j]) / N_OBJ   # normalised Hamming
+        for i, j in combinations(range(n), 2)
+    ]
+    return float(np.mean(dists))
+
+
+def severity_apd(F_fail):
+    """
+    APD on violation severity: use only the violated scores (< 0),
+    normalised by the global minimum across all algorithms.
+    """
+    n = F_fail.shape[0]
+    if n < 2:
+        return 0.0
+    # Clip to violations only (set non-violations to 0)
+    F_viol = np.where(F_fail < 0, F_fail, 0.0)
+    # Normalise each objective column to [-1, 0]
+    col_min = F_viol.min(axis=0)
+    col_min = np.where(col_min < 0, col_min, -1e-9)  # avoid /0
+    F_norm = F_viol / np.abs(col_min)
+    dists = [
+        np.linalg.norm(F_norm[i] - F_norm[j])
+        for i, j in combinations(range(n), 2)
+    ]
+    return float(np.mean(dists))
+
+
+# Compute per-run objective-space metrics
+obj_apd_hamming = {}   # name -> list of per-run Hamming APD
+obj_apd_severity = {}  # name -> list of per-run severity APD
+all_patterns = {}      # name -> stacked binary patterns across all runs
+obj_violation_rates = {}  # name -> (N_OBJ,) fraction of failures that violate each obj
+
+for name, runs in algo_runs.items():
+    h_apds, s_apds = [], []
+    all_pat = []
+
+    for X, F in runs:
+        F_fail = get_failure_scores(X, F)
+        if F_fail.shape[0] < 2:
+            h_apds.append(0.0)
+            s_apds.append(0.0)
+            continue
+        pat = violation_pattern(F_fail)
+        h_apds.append(hamming_apd(pat))
+        s_apds.append(severity_apd(F_fail))
+        all_pat.append(pat)
+
+    obj_apd_hamming[name] = h_apds
+    obj_apd_severity[name] = s_apds
+
+    if all_pat:
+        stacked = np.vstack(all_pat)
+        all_patterns[name] = stacked
+        obj_violation_rates[name] = stacked.mean(axis=0)  # fraction violated per obj
+
+# Print objective-space summary
+print(f"\n{'Algorithm':<25} {'Hamming APD':>13} {'Severity APD':>14}")
+print("-" * 55)
+for name in names_present:
+    if name not in obj_apd_hamming:
+        continue
+    h = np.mean(obj_apd_hamming[name])
+    s = np.mean(obj_apd_severity[name])
+    print(f"{name:<25} {h:>13.4f} {s:>14.4f}")
+print("=" * 55)
+print("Hamming APD: how often do failures violate DIFFERENT objectives")
+print("             (0=always same obj violated, 0.5=maximally diverse)")
+print("Severity APD: how varied are the violation magnitudes")
+
+# ============================================================
+# Plot 4: Per-objective violation rate (stacked bar)
+# ============================================================
+names_w_pat = [n for n in names_present if n in obj_violation_rates]
+x_pos = np.arange(len(names_w_pat))
+bar_width = 0.15
+obj_colors = ["#e41a1c", "#ff7f00", "#4daf4a", "#377eb8", "#984ea3"]
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Left: grouped bar — violation rate per objective per algorithm
+ax = axes[0]
+for oi, (oname, ocolor) in enumerate(zip(OBJ_NAMES, obj_colors)):
+    rates = [obj_violation_rates[n][oi] for n in names_w_pat]
+    ax.bar(x_pos + oi * bar_width, rates, bar_width,
+           label=oname, color=ocolor, alpha=0.85)
+
+ax.set_xticks(x_pos + bar_width * (N_OBJ - 1) / 2)
+ax.set_xticklabels(names_w_pat, rotation=15, ha="right", fontsize=9)
+ax.set_ylabel("Fraction of failures that violate this objective")
+ax.set_ylim(0, 1.05)
+ax.legend(title="Objective", fontsize=8)
+ax.set_title("Per-Objective Violation Rate\n(higher & more balanced = more diverse violation types)", fontsize=10)
+ax.grid(axis="y", alpha=0.3)
+
+# Right: Hamming APD box plot
+ax = axes[1]
+data_h = [obj_apd_hamming[n] for n in names_w_pat]
+bp = ax.boxplot(data_h, patch_artist=True, widths=0.45, zorder=2)
+for patch, name in zip(bp["boxes"], names_w_pat):
+    patch.set_facecolor(algo_color[name])
+    patch.set_alpha(0.5)
+
+for i, name in enumerate(names_w_pat):
+    y = obj_apd_hamming[name]
+    x_jitter = np.random.normal(i + 1, 0.05, size=len(y))
+    ax.scatter(x_jitter, y, color=algo_color[name], s=50, zorder=5,
+               edgecolors="white", linewidths=0.5)
+
+ax.set_xticks(range(1, len(names_w_pat) + 1))
+ax.set_xticklabels(names_w_pat, rotation=15, ha="right", fontsize=9)
+ax.set_ylabel("Hamming APD (normalised)")
+ax.set_title("Violation Type Diversity (Hamming APD)\n"
+             "Higher = failures violate different objectives\n"
+             "(max = 0.5 for 5 objectives)", fontsize=10)
+ax.grid(axis="y", alpha=0.3)
+
+plt.tight_layout()
+out4 = os.path.join(OUTPUT_DIR, "objective_space_diversity.png")
+plt.savefig(out4, dpi=150)
+plt.close()
+print(f"\nSaved: {out4}")
+
+# ============================================================
+# Plot 5: Unique violation patterns heatmap
+# Shows which combinations of objectives are violated together
+# ============================================================
+fig, axes = plt.subplots(1, len(names_w_pat),
+                          figsize=(4 * len(names_w_pat), 4))
+if len(names_w_pat) == 1:
+    axes = [axes]
+
+for ax, name in zip(axes, names_w_pat):
+    patterns = all_patterns[name]
+    # Count unique patterns
+    pattern_strings = ["".join(map(str, row.astype(int))) for row in patterns]
+    from collections import Counter
+    counts = Counter(pattern_strings)
+
+    # Sort by frequency
+    sorted_patterns = sorted(counts.items(), key=lambda x: -x[1])
+    pat_labels = [p for p, _ in sorted_patterns]
+    pat_counts = [c for _, c in sorted_patterns]
+
+    # Convert pattern string to matrix for heatmap
+    mat = np.array([[int(c) for c in p] for p in pat_labels])
+
+    im = ax.imshow(mat.T, cmap="RdYlGn", aspect="auto", vmin=0, vmax=1)
+    ax.set_yticks(range(N_OBJ))
+    ax.set_yticklabels(OBJ_NAMES, fontsize=9)
+    ax.set_xticks(range(len(pat_labels)))
+    ax.set_xticklabels(
+        [f"n={c}" for c in pat_counts], rotation=45, ha="right", fontsize=7
+    )
+    ax.set_title(
+        f"{name}\n{len(counts)} unique patterns\n"
+        f"Hamming APD={np.mean(obj_apd_hamming[name]):.3f}",
+        fontsize=9,
+    )
+    ax.set_xlabel("Violation pattern (sorted by frequency)")
+
+fig.suptitle(
+    "Unique Violation Patterns per Algorithm\n"
+    "(green=violated, red=not violated; more columns = more diverse violation types)",
+    fontsize=11,
+)
+plt.tight_layout()
+out5 = os.path.join(OUTPUT_DIR, "violation_patterns.png")
+plt.savefig(out5, dpi=150)
+plt.close()
+print(f"Saved: {out5}")
+
+print("\nAll objective-space diversity plots saved to:", OUTPUT_DIR)
