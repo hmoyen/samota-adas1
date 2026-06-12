@@ -24,7 +24,8 @@ DOMAINS:
 """
 
 import sys
-sys.path.insert(0, '/home/lena/Downloads/icse2025_replication_package/online-step-experiments/ADAS1')
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
 import utils.helpers as helpers
@@ -54,22 +55,19 @@ conf.MDP_FOLDER = "INPUT/AutonomousDriving_v1"
 conf.PLOT = False
 conf.MAX_SAMPLES = 100
 
-PARAM_BOUNDS = {
-    "car_speed":    (5.0,  50.0,  "real"),
-    "p_x":          (0.0,  10.0,  "real"),
-    "p_y":          (0.0,  10.0,  "real"),
-    "orientation":  (-30,   30,   "int"),
-    "weather":      (0,      2,   "int"),
-    "road_shape":   (0,      2,   "int"),
-}
-LB = np.array([5.0, 0.0, 0.0, -30, 0, 0])
-UB = np.array([50.0, 10.0, 10.0, 30, 2, 2])
+# Parameter order matches helpers.create_ss_variables which uses sorted() keys.
+# Must be consistent everywhere: ART bounds, pymoo variables, dict↔array conversion.
+VAR_NAMES = sorted(conf.SS_VARIABLES.keys())
+LB = np.array([conf.SS_VARIABLES[v]["range"][0] for v in VAR_NAMES], dtype=float)
+UB = np.array([conf.SS_VARIABLES[v]["range"][1] for v in VAR_NAMES], dtype=float)
 
 
 def _make_pymoo_variables():
     variables = {}
-    for name, (lo, hi, kind) in PARAM_BOUNDS.items():
-        variables[name] = Real(bounds=(lo, hi)) if kind == "real" else Integer(bounds=(lo, hi))
+    for name in VAR_NAMES:
+        lo, hi = conf.SS_VARIABLES[name]["range"]
+        domain = conf.SS_VARIABLES[name]["domain"]
+        variables[name] = Real(bounds=(lo, hi)) if domain is float else Integer(bounds=(lo, hi))
     return variables
 
 
@@ -105,23 +103,26 @@ def evaluate_test_case(params):
 
 
 def params_to_dict(p):
-    return {
-        "car_speed":   float(p[0]),
-        "p_x":         float(p[1]),
-        "p_y":         float(p[2]),
-        "orientation": int(p[3]),
-        "weather":     int(p[4]),
-        "road_shape":  int(p[5]),
-    }
+    """Convert sorted-order params array to named dict."""
+    return {VAR_NAMES[i]: (float(p[i]) if conf.SS_VARIABLES[VAR_NAMES[i]]["domain"] is float
+                           else int(p[i]))
+            for i in range(len(VAR_NAMES))}
 
 
 def dict_to_params(d):
-    return np.array([d["car_speed"], d["p_x"], d["p_y"],
-                     d["orientation"], d["weather"], d["road_shape"]])
+    """Convert named dict to sorted-order params array (matches VAR_NAMES order)."""
+    return np.array([float(d[v]) for v in VAR_NAMES])
 
 
 def pymoo_to_params(x):
-    return dict_to_params(x) if isinstance(x, dict) else np.array(x)
+    """Extract sorted-order params array from pymoo solution (dict or array)."""
+    if isinstance(x, dict):
+        return dict_to_params(x)
+    # pymoo MixedVariable sometimes returns numpy array of dicts; take first element
+    arr = np.asarray(x)
+    if arr.dtype == object:
+        return dict_to_params(arr.flat[0])
+    return arr
 
 
 # ============================================================================
@@ -129,6 +130,7 @@ def pymoo_to_params(x):
 # ============================================================================
 
 def art_initial_population(size=300):
+    """Maximin sampling — generates params in VAR_NAMES (sorted) order."""
     pop = []
     pop.append(np.random.uniform(LB, UB))
 
@@ -144,6 +146,7 @@ def art_initial_population(size=300):
         pop.append(best)
 
     pop = np.array(pop)
+    # params_to_dict reads positions using VAR_NAMES order — consistent with LB/UB
     return [params_to_dict(x) for x in pop], pop
 
 
@@ -359,13 +362,18 @@ def _ls_one_cluster(X_cluster, F_cluster, obj_idx, l_max, seed):
     )
     result = minimize(problem, alg, ('n_gen', l_max), seed=seed, verbose=False)
 
-    if result.X is not None and len(result.X) > 0:
-        best_x = result.X[0] if isinstance(result.X, list) else result.X
-        try:
-            return pymoo_to_params(best_x)
-        except (TypeError, KeyError, IndexError):
+    if result.X is None:
+        return None
+    # pymoo MixedVariable: result.X is either a dict (single) or numpy array of dicts
+    try:
+        if isinstance(result.X, dict):
+            return pymoo_to_params(result.X)
+        pop = result.X if isinstance(result.X, list) else list(result.X)
+        if len(pop) == 0:
             return None
-    return None
+        return pymoo_to_params(pop[0])
+    except (TypeError, KeyError, IndexError):
+        return None
 
 
 def local_search_diverse(X_all, F_all, uncovered_objectives, pattern_archive,
@@ -505,8 +513,7 @@ def pfes_samota_diverse(max_iterations=30, max_time_seconds=3600, budget=900):
         if time.time() - start_time > max_time_seconds or eval_count >= budget:
             break
 
-        params = [tc["car_speed"], tc["p_x"], tc["p_y"],
-                  tc["orientation"], tc["weather"], tc["road_shape"]]
+        params = [tc[v] for v in VAR_NAMES]
         scores, _, reqs_satisfied = evaluate_test_case(params)
         eval_count += 1
 
