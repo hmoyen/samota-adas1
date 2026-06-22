@@ -59,8 +59,8 @@ FALLBACK_ALGORITHMS = [
 
 PHASE1_END = 300      # SAMOTA Phase 1 ends here
 WINDOW     = 50       # Window size for discovery rate
-OBJ_NAMES  = ["V0", "V1", "V2", "V3", "V4"]
-N_OBJ      = len(OBJ_NAMES)
+REQ_NAMES  = ["R0", "R1", "R2", "R3", "R4", "R5"]   # ADAS2 has 6 requirements
+N_REQ      = len(REQ_NAMES)
 
 
 # ============================================================
@@ -68,10 +68,19 @@ N_OBJ      = len(OBJ_NAMES)
 # ============================================================
 
 def load_run(run_dir):
+    """Load per-evaluation requirement satisfaction. Returns violated matrix (1=violated)."""
+    reqs_path = os.path.join(run_dir, "Reqs_all_evaluations_NSGA3_0.csv")
+    if os.path.exists(reqs_path):
+        df = pd.read_csv(reqs_path, header=None)
+        df = df.replace({"True": 1, "False": 0, True: 1, False: 0})
+        df = df.apply(pd.to_numeric, errors="coerce").dropna()
+        return (~df.values.astype(bool)).astype(int)
     f_path = os.path.join(run_dir, "F_all_evaluations_NSGA3_0.csv")
-    if not os.path.exists(f_path):
-        return None
-    return pd.read_csv(f_path).values.astype(float)
+    if os.path.exists(f_path):
+        df = pd.read_csv(f_path, header=None)
+        df = df.apply(pd.to_numeric, errors="coerce").dropna()
+        return (df.values < 0).astype(int)
+    return None
 
 
 def load_algorithm(pattern_or_dir):
@@ -86,15 +95,15 @@ def load_algorithm(pattern_or_dir):
     return runs
 
 
-def cumulative_violations(F):
-    """Cumulative count of test cases with at least one violation, over eval index."""
-    is_viol = np.any(F < 0, axis=1)
+def cumulative_violations(R):
+    """Cumulative count of test cases with at least one requirement violated."""
+    is_viol = np.any(R > 0, axis=1)
     return np.cumsum(is_viol)
 
 
-def discovery_rate(F, window=WINDOW):
+def discovery_rate(R, window=WINDOW):
     """New violations found per eval window."""
-    is_viol = np.any(F < 0, axis=1)
+    is_viol = np.any(R > 0, axis=1)
     n = len(is_viol)
     rates = []
     for start in range(0, n, window):
@@ -103,14 +112,12 @@ def discovery_rate(F, window=WINDOW):
     return np.array(rates)
 
 
-def first_violation_eval(F):
-    """
-    For each objective, return the eval index at which it was first violated.
-    Returns inf if never violated.
-    """
+def first_violation_eval(R):
+    """For each requirement, return eval index at which it was first violated.
+    Returns inf if never violated."""
     result = []
-    for obj in range(F.shape[1]):
-        viol_evals = np.where(F[:, obj] < 0)[0]
+    for req in range(R.shape[1]):
+        viol_evals = np.where(R[:, req] > 0)[0]
         result.append(viol_evals[0] if len(viol_evals) > 0 else np.inf)
     return result
 
@@ -148,7 +155,7 @@ names = list(dict.fromkeys(names))  # deduplicate preserving order
 print("\nPlotting cumulative violations...")
 
 # Find max eval length across all runs
-max_evals = max(F.shape[0] for runs in algo_data.values() for F in runs)
+max_evals = max(R.shape[0] for runs in algo_data.values() for R in runs)
 eval_x = np.arange(1, max_evals + 1)
 
 fig, ax = plt.subplots(figsize=(10, 6))
@@ -159,8 +166,8 @@ for name in names:
 
     # Pad shorter runs to max_evals
     curves = []
-    for F in runs:
-        c = cumulative_violations(F)
+    for R in runs:
+        c = cumulative_violations(R)
         if len(c) < max_evals:
             c = np.pad(c, (0, max_evals - len(c)), mode="edge")
         curves.append(c)
@@ -208,8 +215,8 @@ for name in names:
     runs = algo_data[name]
 
     rates_all = []
-    for F in runs:
-        r = discovery_rate(F, WINDOW)
+    for R in runs:
+        r = discovery_rate(R, WINDOW)
         if len(r) < n_windows:
             r = np.pad(r, (0, n_windows - len(r)), mode="constant")
         rates_all.append(r[:n_windows])
@@ -248,26 +255,24 @@ print(f"  Saved: {out2}")
 # ============================================================
 print("Plotting time-to-first-violation...")
 
-fig, axes = plt.subplots(1, N_OBJ, figsize=(3 * N_OBJ, 5), sharey=False)
+fig, axes = plt.subplots(1, N_REQ, figsize=(3 * N_REQ, 5), sharey=False)
 
-for oi, (obj_name, ax) in enumerate(zip(OBJ_NAMES, axes)):
+for oi, (req_name, ax) in enumerate(zip(REQ_NAMES, axes)):
     data_by_algo = []
     labels = []
 
     for name in names:
         color = algo_color[name]
         ttfv = []
-        for F in algo_data[name]:
-            first = first_violation_eval(F)
-            val = first[oi]
+        for R in algo_data[name]:
+            first = first_violation_eval(R)
+            val = first[oi] if oi < len(first) else np.inf
             if val != np.inf:
                 ttfv.append(val)
-        # Runs that never violated this objective → show as max_evals+
         n_never = len(algo_data[name]) - len(ttfv)
         data_by_algo.append((ttfv, n_never, algo_color[name], name))
         labels.append(name)
 
-    # Box plot of eval-to-first-violation
     positions = range(1, len(data_by_algo) + 1)
     for pos, (ttfv, n_never, color, name) in zip(positions, data_by_algo):
         if ttfv:
@@ -289,15 +294,15 @@ for oi, (obj_name, ax) in enumerate(zip(OBJ_NAMES, axes)):
          for n in labels],
         fontsize=7, rotation=20, ha="right"
     )
-    ax.set_title(obj_name, fontsize=11, fontweight="bold")
+    ax.set_title(req_name, fontsize=11, fontweight="bold")
     ax.set_ylim(-10, max_evals * 1.15)
     ax.set_ylabel("Eval index of first violation" if oi == 0 else "")
     ax.grid(axis="y", alpha=0.3)
     ax.axhline(PHASE1_END, color="gray", linestyle="--", lw=1, alpha=0.5)
 
 fig.suptitle(
-    "Time-to-First-Violation per Objective\n"
-    "(lower = found earlier; 'never' = objective never violated in that run;\n"
+    "Time-to-First-Violation per Requirement\n"
+    "(lower = found earlier; 'never' = requirement never violated in that run;\n"
     " dashed line = end of Phase 1 for SAMOTA)",
     fontsize=11,
 )

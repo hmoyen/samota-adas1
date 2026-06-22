@@ -44,6 +44,24 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 ALGORITHMS = [
     (
         "PFES Baseline",
+        os.path.join(BASE_DIR, "results_25runs_pfes", "run_*"),
+        "#2196F3",
+    ),
+    (
+        "PFES+SAMOTA",
+        os.path.join(BASE_DIR, "results_25runs_samota", "run_*"),
+        "#FF9800",
+    ),
+    (
+        "PFES+SAMOTA+EI",
+        os.path.join(BASE_DIR, "results_25runs_ei", "run_*"),
+        "#4CAF50",
+    ),
+]
+
+FALLBACK_ALGORITHMS = [
+    (
+        "PFES Baseline",
         os.path.join(BASE_DIR, "results_10runs_pfes", "run_*"),
         "#2196F3",
     ),
@@ -57,11 +75,6 @@ ALGORITHMS = [
         os.path.join(BASE_DIR, "pfes_samota_ei"),
         "#4CAF50",
     ),
-    (
-        "PFES+SAMOTA+EI+NBI",
-        os.path.join(BASE_DIR, "pfes_samota_ei_nbi"),
-        "#9C27B0",
-    ),
 ]
 
 
@@ -70,35 +83,53 @@ ALGORITHMS = [
 # ============================================================
 
 def load_run(run_dir):
-    """Load X (parameters) and F (scores) from a run directory.
-    Returns (X_array, F_array) or (None, None) if files missing."""
+    """Load X (parameters) and R (violation matrix, 1=violated) from a run directory.
+    Prefers Reqs_all_evaluations; falls back to F_all_evaluations (score < 0).
+    Returns (X_array, R_array) or (None, None) if files missing."""
     x_path = os.path.join(run_dir, "X_all_evaluations_NSGA3_0.csv")
-    f_path = os.path.join(run_dir, "F_all_evaluations_NSGA3_0.csv")
-    if not os.path.exists(x_path) or not os.path.exists(f_path):
+    if not os.path.exists(x_path):
         return None, None
-    X = pd.read_csv(x_path).values.astype(float)
-    F = pd.read_csv(f_path).values.astype(float)
-    return X, F
+    X = pd.read_csv(x_path, header=None).values.astype(float)
+
+    reqs_path = os.path.join(run_dir, "Reqs_all_evaluations_NSGA3_0.csv")
+    if os.path.exists(reqs_path):
+        df = pd.read_csv(reqs_path, header=None)
+        df = df.replace({"True": 1, "False": 0, True: 1, False: 0})
+        df = df.apply(pd.to_numeric, errors="coerce").dropna()
+        R = (~df.values.astype(bool)).astype(int)
+        if X.shape[0] != R.shape[0]:
+            X = X[:R.shape[0]]
+        return X, R
+
+    f_path = os.path.join(run_dir, "F_all_evaluations_NSGA3_0.csv")
+    if os.path.exists(f_path):
+        df = pd.read_csv(f_path, header=None)
+        df = df.apply(pd.to_numeric, errors="coerce").dropna()
+        R = (df.values < 0).astype(int)
+        if X.shape[0] != R.shape[0]:
+            X = X[:R.shape[0]]
+        return X, R
+
+    return None, None
 
 
 def load_algorithm(pattern_or_dir):
-    """Return list of (X, F) for all runs matching the pattern."""
+    """Return list of (X, R) for all runs matching the pattern."""
     matches = sorted(glob.glob(pattern_or_dir))
     if not matches:
-        # Single directory (no glob wildcard)
         if os.path.isdir(pattern_or_dir):
             matches = [pattern_or_dir]
     runs = []
     for d in matches:
-        X, F = load_run(d)
+        X, R = load_run(d)
         if X is not None:
-            runs.append((X, F))
+            runs.append((X, R))
     return runs
 
 
-def get_failures(X, F):
-    """Rows of X where at least one F score is negative (= requirement violated)."""
-    return X[np.any(F < 0, axis=1)]
+def get_failures(X, R):
+    """Rows of X where at least one requirement is violated (R > 0)."""
+    return X[np.any(R > 0, axis=1)]
 
 
 # ============================================================
@@ -121,18 +152,24 @@ def average_pairwise_distance(X_norm):
 # Load all data
 # ============================================================
 print("Loading experiment data...")
-algo_runs = {}      # name -> list of (X, F)
+algo_runs = {}      # name -> list of (X, R)
 algo_color = {}     # name -> hex color
 all_X_pool = []     # for fitting the global scaler
 
-for name, pattern, color in ALGORITHMS:
-    runs = load_algorithm(pattern)
-    algo_color[name] = color
-    if runs:
-        algo_runs[name] = runs
-        all_X_pool.extend(X for X, _ in runs)
-        print(f"  {name}: {len(runs)} run(s)")
-    else:
+for algo_list in [ALGORITHMS, FALLBACK_ALGORITHMS]:
+    for name, pattern, color in algo_list:
+        if name in algo_runs:
+            continue
+        runs = load_algorithm(pattern)
+        if runs:
+            algo_runs[name] = runs
+            algo_color[name] = color
+            all_X_pool.extend(X for X, _ in runs)
+            print(f"  {name}: {len(runs)} run(s)")
+
+for name, _, color in ALGORITHMS:
+    if name not in algo_runs:
+        algo_color[name] = color
         print(f"  {name}: not found, skipping")
 
 if not algo_runs:
@@ -156,8 +193,8 @@ for name, runs in algo_runs.items():
     all_fail_norm = []
     run_labels = []
 
-    for run_idx, (X, F) in enumerate(runs):
-        X_fail = get_failures(X, F)
+    for run_idx, (X, R) in enumerate(runs):
+        X_fail = get_failures(X, R)
         n_fail = X_fail.shape[0]
 
         if n_fail >= 2:
@@ -169,7 +206,7 @@ for name, runs in algo_runs.items():
             apd = 0.0
 
         apds.append(apd)
-        print(f"  {name} | run {run_idx+1:>2}: {n_fail:>3} failures, APD = {apd:.4f}")
+        print(f"  {name} | run {run_idx+1:>2}: {n_fail:>3} failures, APD = {apd:.4f}")  # noqa
 
     apd_per_algo[name] = apds
     if all_fail_norm:
@@ -185,7 +222,7 @@ print("-" * 65)
 for name in algo_runs:
     apds = apd_per_algo[name]
     runs = algo_runs[name]
-    avg_fails = np.mean([get_failures(X, F).shape[0] for X, F in runs])
+    avg_fails = np.mean([get_failures(X, R).shape[0] for X, R in runs])
     print(f"{name:<25} {len(runs):>5} {np.mean(apds):>10.4f} {np.std(apds):>10.4f} {avg_fails:>10.1f}")
 print("=" * 65)
 
@@ -305,8 +342,8 @@ for ax, name in zip(axes, algos_with_failures):
     apds = apd_per_algo[name]
     # Pick the run closest to median APD
     median_idx = int(np.argsort(apds)[len(apds) // 2])
-    X, F = algo_runs[name][median_idx]
-    X_fail = get_failures(X, F)
+    X, R = algo_runs[name][median_idx]
+    X_fail = get_failures(X, R)
 
     if X_fail.shape[0] < 2:
         ax.text(0.5, 0.5, "< 2 failures in\nthis run",
@@ -369,19 +406,19 @@ print("\n\n" + "=" * 65)
 print("OBJECTIVE-SPACE DIVERSITY ANALYSIS")
 print("=" * 65)
 
-OBJ_NAMES = ["V0", "V1", "V2", "V3", "V4"]
-N_OBJ = len(OBJ_NAMES)
+REQ_NAMES = ["R0", "R1", "R2"]   # ADAS1 has 3 requirements
+N_REQ = len(REQ_NAMES)
 
 
-def get_failure_scores(X, F):
-    """Return F rows where at least one score is negative."""
-    mask = np.any(F < 0, axis=1)
-    return F[mask]
+def get_failure_scores(X, R):
+    """Return R rows where at least one requirement is violated (R > 0)."""
+    mask = np.any(R > 0, axis=1)
+    return R[mask].astype(float)
 
 
-def violation_pattern(F_fail):
-    """Binary matrix: 1 where score < 0 (violated), 0 otherwise."""
-    return (F_fail < 0).astype(float)
+def violation_pattern(R_fail):
+    """Binary matrix: 1 where requirement violated. R is already binary."""
+    return R_fail.astype(float)
 
 
 def hamming_apd(patterns):
@@ -390,7 +427,7 @@ def hamming_apd(patterns):
     if n < 2:
         return 0.0
     dists = [
-        np.sum(patterns[i] != patterns[j]) / N_OBJ   # normalised Hamming
+        np.sum(patterns[i] != patterns[j]) / N_REQ   # normalised Hamming
         for i, j in combinations(range(n), 2)
     ]
     return float(np.mean(dists))
@@ -427,15 +464,15 @@ for name, runs in algo_runs.items():
     h_apds, s_apds = [], []
     all_pat = []
 
-    for X, F in runs:
-        F_fail = get_failure_scores(X, F)
-        if F_fail.shape[0] < 2:
+    for X, R in runs:
+        R_fail = get_failure_scores(X, R)
+        if R_fail.shape[0] < 2:
             h_apds.append(0.0)
             s_apds.append(0.0)
             continue
-        pat = violation_pattern(F_fail)
+        pat = violation_pattern(R_fail)
         h_apds.append(hamming_apd(pat))
-        s_apds.append(severity_apd(F_fail))
+        s_apds.append(severity_apd(R_fail))
         all_pat.append(pat)
 
     obj_apd_hamming[name] = h_apds
@@ -465,24 +502,24 @@ print("Severity APD: how varied are the violation magnitudes")
 # ============================================================
 names_w_pat = [n for n in names_present if n in obj_violation_rates]
 x_pos = np.arange(len(names_w_pat))
-bar_width = 0.15
-obj_colors = ["#e41a1c", "#ff7f00", "#4daf4a", "#377eb8", "#984ea3"]
+bar_width = 0.2
+req_colors = ["#e41a1c", "#ff7f00", "#4daf4a"]
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-# Left: grouped bar — violation rate per objective per algorithm
+# Left: grouped bar — violation rate per requirement per algorithm
 ax = axes[0]
-for oi, (oname, ocolor) in enumerate(zip(OBJ_NAMES, obj_colors)):
-    rates = [obj_violation_rates[n][oi] for n in names_w_pat]
-    ax.bar(x_pos + oi * bar_width, rates, bar_width,
-           label=oname, color=ocolor, alpha=0.85)
+for ri, (rname, rcolor) in enumerate(zip(REQ_NAMES, req_colors)):
+    rates = [obj_violation_rates[n][ri] for n in names_w_pat]
+    ax.bar(x_pos + ri * bar_width, rates, bar_width,
+           label=rname, color=rcolor, alpha=0.85)
 
-ax.set_xticks(x_pos + bar_width * (N_OBJ - 1) / 2)
+ax.set_xticks(x_pos + bar_width * (N_REQ - 1) / 2)
 ax.set_xticklabels(names_w_pat, rotation=15, ha="right", fontsize=9)
-ax.set_ylabel("Fraction of failures that violate this objective")
+ax.set_ylabel("Fraction of failures that violate this requirement")
 ax.set_ylim(0, 1.05)
-ax.legend(title="Objective", fontsize=8)
-ax.set_title("Per-Objective Violation Rate\n(higher & more balanced = more diverse violation types)", fontsize=10)
+ax.legend(title="Requirement", fontsize=8)
+ax.set_title("Per-Requirement Violation Rate\n(higher & more balanced = more diverse violation types)", fontsize=10)
 ax.grid(axis="y", alpha=0.3)
 
 # Right: Hamming APD box plot
@@ -503,8 +540,8 @@ ax.set_xticks(range(1, len(names_w_pat) + 1))
 ax.set_xticklabels(names_w_pat, rotation=15, ha="right", fontsize=9)
 ax.set_ylabel("Hamming APD (normalised)")
 ax.set_title("Violation Type Diversity (Hamming APD)\n"
-             "Higher = failures violate different objectives\n"
-             "(max = 0.5 for 5 objectives)", fontsize=10)
+             "Higher = failures violate different requirements\n"
+             f"(max = 0.5 for {N_REQ} requirements)", fontsize=10)
 ax.grid(axis="y", alpha=0.3)
 
 plt.tight_layout()
@@ -538,8 +575,8 @@ for ax, name in zip(axes, names_w_pat):
     mat = np.array([[int(c) for c in p] for p in pat_labels])
 
     im = ax.imshow(mat.T, cmap="RdYlGn", aspect="auto", vmin=0, vmax=1)
-    ax.set_yticks(range(N_OBJ))
-    ax.set_yticklabels(OBJ_NAMES, fontsize=9)
+    ax.set_yticks(range(N_REQ))
+    ax.set_yticklabels(REQ_NAMES, fontsize=9)
     ax.set_xticks(range(len(pat_labels)))
     ax.set_xticklabels(
         [f"n={c}" for c in pat_counts], rotation=45, ha="right", fontsize=7

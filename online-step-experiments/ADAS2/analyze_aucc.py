@@ -43,41 +43,52 @@ REACHABLE_THRESHOLD = 0.05
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_runs(pattern):
+    """Load per-evaluation requirement violation matrix (1=violated, 0=satisfied).
+    Prefers Reqs_all_evaluations; falls back to F_all_evaluations (score < 0)."""
     runs = []
     for run_dir in sorted(glob.glob(pattern)):
-        csvs = glob.glob(os.path.join(run_dir, "F_all_evaluations_*.csv"))
-        if not csvs:
-            continue
-        df = pd.read_csv(csvs[0], header=None)
-        df = df.apply(pd.to_numeric, errors="coerce").dropna()
-        F = df.values.astype(float)
-        runs.append(F)
+        reqs_csvs = glob.glob(os.path.join(run_dir, "Reqs_all_evaluations_*.csv"))
+        if reqs_csvs:
+            df = pd.read_csv(reqs_csvs[0], header=None)
+            df = df.replace({"True": 1, "False": 0, True: 1, False: 0})
+            df = df.apply(pd.to_numeric, errors="coerce").dropna()
+            R = (~df.values.astype(bool)).astype(int)
+        else:
+            f_csvs = glob.glob(os.path.join(run_dir, "F_all_evaluations_*.csv"))
+            if not f_csvs:
+                continue
+            df = pd.read_csv(f_csvs[0], header=None)
+            df = df.apply(pd.to_numeric, errors="coerce").dropna()
+            R = (df.values < 0).astype(int)
+        runs.append(R)
     return runs
 
 
 def detect_reachable(algo_runs):
-    all_F = [F for runs in algo_runs.values() for F in runs]
-    if not all_F:
+    """Return list of requirement indices violated in >=REACHABLE_THRESHOLD of all runs."""
+    all_R = [R for runs in algo_runs.values() for R in runs]
+    if not all_R:
         return []
-    n_obj = all_F[0].shape[1]
-    counts = np.zeros(n_obj)
-    for F in all_F:
-        for obj in range(n_obj):
-            if np.any(F[:, obj] < 0):
-                counts[obj] += 1
-    total = len(all_F)
-    return [obj for obj in range(n_obj) if counts[obj] / total >= REACHABLE_THRESHOLD]
+    n_req = all_R[0].shape[1]
+    counts = np.zeros(n_req)
+    for R in all_R:
+        for req in range(n_req):
+            if np.any(R[:, req] > 0):
+                counts[req] += 1
+    total = len(all_R)
+    return [req for req in range(n_req) if counts[req] / total >= REACHABLE_THRESHOLD]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Metric computation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def first_violation_evals(F, reachable):
+def first_violation_evals(R, reachable):
+    """Dict: req -> first eval index where violated (np.inf if never)."""
     fv = {}
-    for obj in reachable:
-        idx = np.where(F[:, obj] < 0)[0]
-        fv[obj] = int(idx[0]) if len(idx) > 0 else np.inf
+    for req in reachable:
+        idx = np.where(R[:, req] > 0)[0]
+        fv[req] = int(idx[0]) if len(idx) > 0 else np.inf
     return fv
 
 
