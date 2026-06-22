@@ -52,7 +52,10 @@ def load_runs(pattern):
         csvs = glob.glob(os.path.join(run_dir, "F_all_evaluations_*.csv"))
         if not csvs:
             continue
-        F = pd.read_csv(csvs[0], header=None).values
+        df = pd.read_csv(csvs[0], header=None)
+        # Drop any row that cannot be converted to float (e.g. header strings)
+        df = df.apply(pd.to_numeric, errors="coerce").dropna()
+        F = df.values.astype(float)
         runs.append(F)
     return runs
 
