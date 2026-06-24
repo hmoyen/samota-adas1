@@ -168,17 +168,6 @@ def v_apd(F_vs_fail_norm):
     return apd(F_vs_fail_norm)
 
 
-def hamming_apd(R_fail):
-    """Average pairwise Hamming distance on binary violation patterns.
-    Each row is [R0_violated, R1_violated, R2_violated].
-    Distance = fraction of requirements that differ between two test cases."""
-    n, n_req = R_fail.shape
-    if n < 2:
-        return 0.0
-    dists = []
-    for i, j in combinations(range(n), 2):
-        dists.append(np.sum(R_fail[i] != R_fail[j]) / n_req)
-    return float(np.mean(dists))
 
 
 def aucc(R, budget, reachable):
@@ -228,7 +217,7 @@ for cfg in ALGORITHMS:
     runs  = cfg["runs"]
     color = cfg["color"]
 
-    viol_counts, apd_vals, v_apd_vals, hamming_apd_vals, aucc_vals = [], [], [], [], []
+    viol_counts, apd_vals, v_apd_vals, aucc_vals = [], [], [], []
     cumviol_matrix = []
     aucc_curves    = []
     req_found      = np.zeros(N_REQ)
@@ -253,10 +242,6 @@ for cfg in ALGORITHMS:
         Fvs_fail = Fvs_b[is_viol]
         v_apd_vals.append(v_apd(f_scaler.transform(Fvs_fail)) if Fvs_fail.shape[0] >= 2 else 0.0)
 
-        # Hamming APD (violation pattern diversity)
-        R_fail = R_b[is_viol]
-        hamming_apd_vals.append(hamming_apd(R_fail) if R_fail.shape[0] >= 2 else 0.0)
-
         # AUCC
         a, curve = aucc(R_b, BUDGET, REACHABLE)
         aucc_vals.append(a)
@@ -275,7 +260,6 @@ for cfg in ALGORITHMS:
         "viol_counts":      np.array(viol_counts),
         "apd_vals":         np.array(apd_vals),
         "v_apd_vals":       np.array(v_apd_vals),
-        "hamming_apd_vals": np.array(hamming_apd_vals),
         "aucc_vals":        np.array(aucc_vals),
         "cumviol_matrix":   np.array(cumviol_matrix),
         "aucc_curves":      np.array(aucc_curves),
@@ -300,7 +284,6 @@ rows = [
     ("AUCC (normalised)",        [fmt(metrics[n]["aucc_vals"])         for n in names]),
     ("APD — input space",        [fmt(metrics[n]["apd_vals"])          for n in names]),
     ("APD — V-score space",      [fmt(metrics[n]["v_apd_vals"])        for n in names]),
-    ("APD — Hamming (patterns)", [fmt(metrics[n]["hamming_apd_vals"])  for n in names]),
 ]
 for ri, rname in enumerate(REQ_NAMES):
     rows.append((
@@ -404,15 +387,14 @@ print(f"Saved: {out2}")
 # ─────────────────────────────────────────────────────────────────────────────
 # Plot 3: Three APD metrics + violations
 # ─────────────────────────────────────────────────────────────────────────────
-fig, axes = plt.subplots(1, 4, figsize=(18, 5))
+fig, axes = plt.subplots(1, 3, figsize=(14, 5))
 
 apd_panels = [
-    ("apd_vals",         "Input space APD\n(parameter diversity)"),
-    ("v_apd_vals",       "V-score APD\n(objective severity diversity)"),
-    ("hamming_apd_vals", "Hamming APD\n(violation pattern diversity)"),
+    ("apd_vals",   "Input space APD\n(parameter diversity)"),
+    ("v_apd_vals", "V-score APD\n(objective severity diversity)"),
 ]
 
-for ax, (key, title) in zip(axes[:3], apd_panels):
+for ax, (key, title) in zip(axes[:2], apd_panels):
     data = [metrics[n][key] for n in names]
     bp = ax.boxplot(data, patch_artist=True, widths=0.45)
     for patch, color in zip(bp["boxes"], [metrics[n]["color"] for n in names]):
@@ -428,8 +410,8 @@ for ax, (key, title) in zip(axes[:3], apd_panels):
     ax.set_title(title, fontsize=10)
     ax.grid(axis="y", alpha=0.3)
 
-# Violations boxplot (4th panel)
-ax = axes[3]
+# Violations boxplot (3rd panel)
+ax = axes[2]
 data = [metrics[n]["viol_counts"] for n in names]
 bp = ax.boxplot(data, patch_artist=True, widths=0.45)
 for patch, color in zip(bp["boxes"], [metrics[n]["color"] for n in names]):
