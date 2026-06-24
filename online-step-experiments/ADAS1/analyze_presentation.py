@@ -56,18 +56,31 @@ ALGORITHMS = [
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_run(run_dir):
-    """Return (X, R) where R is binary violation matrix (1=violated).
-    Prefers Reqs_all_evaluations; falls back to F_all_evaluations (score<0).
+    """Return (X, R, F_vs) where:
+      R      = binary violation matrix (1=violated, shape n×3)
+      F_vs   = raw V-score matrix using 4 unique cols [0,2,3,4] (shape n×4)
 
-    SAMOTA runs produce F with 5 columns due to a 5-objective NSGA3 setup:
-      col 0 = R0, col 1 = R0 (dup), col 2/3 = unused (0), col 4 = R1/R2.
-    We remap to 3-column R when F has more columns than N_REQ.
+    Both PFES and SAMOTA produce F with 5 cols:
+      col0 = R0 score, col1 = R0 dup, col2/col3 = other objectives,
+      col4 = R1/R2 score for SAMOTA (0 for PFES).
+    We drop col1 (duplicate) and use [col0, col2, col3, col4].
     """
     x_path = os.path.join(run_dir, "X_all_evaluations_NSGA3_0.csv")
     if not os.path.exists(x_path):
-        return None, None
+        return None, None, None
     X = pd.read_csv(x_path).values.astype(float)
 
+    # Always load raw F for V-score APD
+    f_path = os.path.join(run_dir, "F_all_evaluations_NSGA3_0.csv")
+    if not os.path.exists(f_path):
+        return None, None, None
+    df_f = pd.read_csv(f_path, header=None)
+    df_f = df_f.apply(pd.to_numeric, errors="coerce").dropna()
+    F_raw = df_f.values
+    # Use 4 unique columns [0, 2, 3, 4] — col1 is always identical to col0
+    F_vs = F_raw[:, [0, 2, 3, 4]] if F_raw.shape[1] >= 5 else F_raw
+
+    # Load R (violation matrix)
     reqs_path = os.path.join(run_dir, "Reqs_all_evaluations_NSGA3_0.csv")
     if os.path.exists(reqs_path):
         df = pd.read_csv(reqs_path, header=None)
@@ -75,36 +88,30 @@ def load_run(run_dir):
         df = df.apply(pd.to_numeric, errors="coerce").dropna()
         R = (~df.values.astype(bool)).astype(int)
     else:
-        f_path = os.path.join(run_dir, "F_all_evaluations_NSGA3_0.csv")
-        if not os.path.exists(f_path):
-            return None, None
-        df = pd.read_csv(f_path, header=None)
-        df = df.apply(pd.to_numeric, errors="coerce").dropna()
-        F = df.values
+        F = F_raw
         if F.shape[1] == N_REQ:
-            # PFES format: columns map directly to R0, R1, R2
             R = (F < 0).astype(int)
         else:
-            # SAMOTA 5-col format: col0=R0, col1=R0(dup), col2/3=unused, col4=R1&R2
+            # 5-col format: col0=R0, col4=R1&R2
             R = np.zeros((F.shape[0], N_REQ), dtype=int)
-            R[:, 0] = (F[:, 0] < 0).astype(int)   # R0
-            R[:, 1] = (F[:, -1] < 0).astype(int)  # R1 (last active col)
-            R[:, 2] = (F[:, -1] < 0).astype(int)  # R2 (same signal as R1)
+            R[:, 0] = (F[:, 0] < 0).astype(int)
+            R[:, 1] = (F[:, -1] < 0).astype(int)
+            R[:, 2] = (F[:, -1] < 0).astype(int)
 
-    n = min(X.shape[0], R.shape[0])
-    return X[:n], R[:n]
+    n = min(X.shape[0], R.shape[0], F_vs.shape[0])
+    return X[:n], R[:n], F_vs[:n]
 
 
 def load_algo(pattern, fallback=None):
-    """Return list of (X, R) for all runs found in pattern (or fallback)."""
+    """Return list of (X, R, F_vs) for all runs found in pattern (or fallback)."""
     runs = []
     dirs = sorted(glob.glob(pattern))
     if not dirs and fallback:
         dirs = sorted(glob.glob(fallback))
     for d in dirs:
-        X, R = load_run(d)
+        X, R, F_vs = load_run(d)
         if X is not None:
-            runs.append((X, R))
+            runs.append((X, R, F_vs))
     return runs
 
 
@@ -122,11 +129,15 @@ for cfg in ALGORITHMS:
 if not any(algo_data.values()):
     raise SystemExit("No data found. Check directory paths.")
 
-# Global MinMaxScaler fitted on all X (for APD normalisation)
-all_X = np.vstack([X for runs in algo_data.values() for X, R in runs])
+# Global MinMaxScaler fitted on all X (for input APD normalisation)
+all_X = np.vstack([X for runs in algo_data.values() for X, R, _ in runs])
 scaler = MinMaxScaler().fit(all_X)
 
-BUDGET = min(R.shape[0] for runs in algo_data.values() for X, R in runs)
+# Global MinMaxScaler fitted on all F_vs (for V-score APD normalisation)
+all_Fvs = np.vstack([Fvs for runs in algo_data.values() for _, _, Fvs in runs])
+f_scaler = MinMaxScaler().fit(all_Fvs)
+
+BUDGET = min(R.shape[0] for runs in algo_data.values() for X, R, _ in runs)
 print(f"  Budget (min rows across all runs): {BUDGET}\n")
 
 
@@ -151,6 +162,25 @@ def apd(X_fail_norm):
     ]))
 
 
+def v_apd(F_vs_fail_norm):
+    """APD on normalised V-score vectors [col0, col2, col3, col4] of failing cases.
+    Captures diversity of failure severity across all objectives."""
+    return apd(F_vs_fail_norm)
+
+
+def hamming_apd(R_fail):
+    """Average pairwise Hamming distance on binary violation patterns.
+    Each row is [R0_violated, R1_violated, R2_violated].
+    Distance = fraction of requirements that differ between two test cases."""
+    n, n_req = R_fail.shape
+    if n < 2:
+        return 0.0
+    dists = []
+    for i, j in combinations(range(n), 2):
+        dists.append(np.sum(R_fail[i] != R_fail[j]) / n_req)
+    return float(np.mean(dists))
+
+
 def aucc(R, budget, reachable):
     """Area Under Coverage Curve, normalised to [0,1].
     At each eval t, count how many reachable requirements have been found so far."""
@@ -172,7 +202,7 @@ def aucc(R, budget, reachable):
 
 def reachable_requirements(algo_data, threshold=0.05):
     """Requirements violated in >=threshold fraction of runs across all algorithms."""
-    all_runs = [R for runs in algo_data.values() for X, R in runs]
+    all_runs = [R for runs in algo_data.values() for X, R, _ in runs]
     if not all_runs:
         return list(range(N_REQ))
     n_req = all_runs[0].shape[1]
@@ -198,28 +228,34 @@ for cfg in ALGORITHMS:
     runs  = cfg["runs"]
     color = cfg["color"]
 
-    viol_counts, apd_vals, aucc_vals = [], [], []
+    viol_counts, apd_vals, v_apd_vals, hamming_apd_vals, aucc_vals = [], [], [], [], []
     cumviol_matrix = []
     aucc_curves    = []
-    req_found      = np.zeros(N_REQ)  # fraction of runs that found each req
+    req_found      = np.zeros(N_REQ)
 
-    for X, R in runs:
-        R_b = R[:BUDGET]
-        X_b = X[:BUDGET]
+    for X, R, F_vs in runs:
+        R_b    = R[:BUDGET]
+        X_b    = X[:BUDGET]
+        Fvs_b  = F_vs[:BUDGET]
 
         # Violations
-        is_viol   = np.any(R_b > 0, axis=1)
+        is_viol = np.any(R_b > 0, axis=1)
         viol_counts.append(int(np.sum(is_viol)))
 
         # Cumulative curve
         cumviol_matrix.append(np.cumsum(is_viol))
 
-        # APD
+        # Input APD (parameter space diversity)
         X_fail = X_b[is_viol]
-        if X_fail.shape[0] >= 2:
-            apd_vals.append(apd(scaler.transform(X_fail)))
-        else:
-            apd_vals.append(0.0)
+        apd_vals.append(apd(scaler.transform(X_fail)) if X_fail.shape[0] >= 2 else 0.0)
+
+        # V-score APD (objective/severity space diversity)
+        Fvs_fail = Fvs_b[is_viol]
+        v_apd_vals.append(v_apd(f_scaler.transform(Fvs_fail)) if Fvs_fail.shape[0] >= 2 else 0.0)
+
+        # Hamming APD (violation pattern diversity)
+        R_fail = R_b[is_viol]
+        hamming_apd_vals.append(hamming_apd(R_fail) if R_fail.shape[0] >= 2 else 0.0)
 
         # AUCC
         a, curve = aucc(R_b, BUDGET, REACHABLE)
@@ -231,17 +267,19 @@ for cfg in ALGORITHMS:
             if np.any(R_b[:, req] > 0):
                 req_found[req] += 1
 
-    req_found /= len(runs)  # convert to fraction
+    req_found /= len(runs)
 
     metrics[name] = {
-        "color":          color,
-        "n_runs":         len(runs),
-        "viol_counts":    np.array(viol_counts),
-        "apd_vals":       np.array(apd_vals),
-        "aucc_vals":      np.array(aucc_vals),
-        "cumviol_matrix": np.array(cumviol_matrix),   # shape (n_runs, budget)
-        "aucc_curves":    np.array(aucc_curves),       # shape (n_runs, budget)
-        "req_found":      req_found,                   # shape (N_REQ,)
+        "color":            color,
+        "n_runs":           len(runs),
+        "viol_counts":      np.array(viol_counts),
+        "apd_vals":         np.array(apd_vals),
+        "v_apd_vals":       np.array(v_apd_vals),
+        "hamming_apd_vals": np.array(hamming_apd_vals),
+        "aucc_vals":        np.array(aucc_vals),
+        "cumviol_matrix":   np.array(cumviol_matrix),
+        "aucc_curves":      np.array(aucc_curves),
+        "req_found":        req_found,
     }
 
 
@@ -258,9 +296,11 @@ def fmt(arr):
     return f"{np.mean(arr):.2f} ± {np.std(arr):.2f}"
 
 rows = [
-    ("Violations / run",      [fmt(metrics[n]["viol_counts"]) for n in names]),
-    ("AUCC (normalised)",     [fmt(metrics[n]["aucc_vals"])   for n in names]),
-    ("APD (failure diversity)",[fmt(metrics[n]["apd_vals"])   for n in names]),
+    ("Violations / run",         [fmt(metrics[n]["viol_counts"])      for n in names]),
+    ("AUCC (normalised)",        [fmt(metrics[n]["aucc_vals"])         for n in names]),
+    ("APD — input space",        [fmt(metrics[n]["apd_vals"])          for n in names]),
+    ("APD — V-score space",      [fmt(metrics[n]["v_apd_vals"])        for n in names]),
+    ("APD — Hamming (patterns)", [fmt(metrics[n]["hamming_apd_vals"])  for n in names]),
 ]
 for ri, rname in enumerate(REQ_NAMES):
     rows.append((
@@ -362,29 +402,33 @@ print(f"Saved: {out2}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Plot 3: APD boxplot (failure diversity)
+# Plot 3: Three APD metrics + violations
 # ─────────────────────────────────────────────────────────────────────────────
-fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+fig, axes = plt.subplots(1, 4, figsize=(18, 5))
 
-# Left: APD boxplot
-ax = axes[0]
-data = [metrics[n]["apd_vals"] for n in names]
-bp = ax.boxplot(data, patch_artist=True, widths=0.45)
-for patch, color in zip(bp["boxes"], [metrics[n]["color"] for n in names]):
-    patch.set_facecolor(color)
-    patch.set_alpha(0.6)
-for i, name in enumerate(names):
-    y = metrics[name]["apd_vals"]
-    ax.scatter(np.random.normal(i + 1, 0.05, len(y)), y,
-               color=metrics[name]["color"], s=50, zorder=5, edgecolors="white", lw=0.5)
-ax.set_xticks([1, 2])
-ax.set_xticklabels(names, fontsize=10)
-ax.set_ylabel("Average Pairwise Distance (APD)", fontsize=12)
-ax.set_title("Diversity of Failing Test Cases\n(higher = more spread across parameter space)", fontsize=11)
-ax.grid(axis="y", alpha=0.3)
+apd_panels = [
+    ("apd_vals",         "Input space APD\n(parameter diversity)"),
+    ("v_apd_vals",       "V-score APD\n(objective severity diversity)"),
+    ("hamming_apd_vals", "Hamming APD\n(violation pattern diversity)"),
+]
 
-# Right: violations boxplot
-ax = axes[1]
+for ax, (key, title) in zip(axes[:3], apd_panels):
+    data = [metrics[n][key] for n in names]
+    bp = ax.boxplot(data, patch_artist=True, widths=0.45)
+    for patch, color in zip(bp["boxes"], [metrics[n]["color"] for n in names]):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+    for i, name in enumerate(names):
+        y = metrics[name][key]
+        ax.scatter(np.random.normal(i + 1, 0.05, len(y)), y,
+                   color=metrics[name]["color"], s=50, zorder=5, edgecolors="white", lw=0.5)
+    ax.set_xticks([1, 2])
+    ax.set_xticklabels(names, fontsize=9)
+    ax.set_ylabel("APD", fontsize=11)
+    ax.set_title(title, fontsize=10)
+    ax.grid(axis="y", alpha=0.3)
+
+# Violations boxplot (4th panel)
 data = [metrics[n]["viol_counts"] for n in names]
 bp = ax.boxplot(data, patch_artist=True, widths=0.45)
 for patch, color in zip(bp["boxes"], [metrics[n]["color"] for n in names]):
@@ -446,7 +490,7 @@ for cfg in ALGORITHMS:
     name = cfg["name"]
     all_fail = []
     labels   = []
-    for run_idx, (X, R) in enumerate(cfg["runs"]):
+    for run_idx, (X, R, _) in enumerate(cfg["runs"]):
         mask = np.any(R[:BUDGET] > 0, axis=1)
         X_fail = X[:BUDGET][mask]
         if X_fail.shape[0] > 0:
