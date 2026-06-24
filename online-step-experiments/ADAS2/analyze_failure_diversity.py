@@ -49,7 +49,7 @@ ALGORITHMS = [
     ),
     (
         "PFES+SAMOTA",
-        os.path.join(BASE_DIR, "results_25runs_samota", "run_*"),
+        os.path.join(BASE_DIR, "results_25runs_samota_seeded", "run_*"),
         "#FF9800",
     ),
 ]
@@ -62,7 +62,7 @@ FALLBACK_ALGORITHMS = [
     ),
     (
         "PFES+SAMOTA",
-        os.path.join(BASE_DIR, "results_10runs_samota_900budget", "run_*"),
+        os.path.join(BASE_DIR, "results_25runs_samota", "run_*"),
         "#FF9800",
     ),
 ]

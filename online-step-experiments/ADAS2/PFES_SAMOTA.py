@@ -261,7 +261,7 @@ class GSMultiObjectivePerObjectiveSurrogateProblem(ElementwiseProblem):
         out["F"] = np.array(F)
 
 
-def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=50, top_k=1):
+def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=50, top_k=1, seed=0):
     """
     Phase 2a: Global Search - PER-OBJECTIVE surrogate + single-objective GA.
 
@@ -304,7 +304,7 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         )
 
         res = minimize(problem, algorithm, ('n_gen', n_gen),
-                       seed=obj_idx * 100, save_history=False, verbose=False)
+                       seed=seed + obj_idx * 100, save_history=False, verbose=False)
 
         if res.X is None:
             continue
@@ -514,7 +514,7 @@ class LSProblem(ElementwiseProblem):
         out["F"] = np.array([pred])
 
 
-def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20):
+def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=0):
     """
     Phase 2b: Local Search with CLUSTER-SPECIFIC RBF surrogates (NOT ensemble!)
 
@@ -584,7 +584,7 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
             )
 
             result = minimize(problem, algorithm_ls, ('n_gen', l_max),
-                            seed=obj_idx * 1000 + cluster_idx, verbose=False)
+                            seed=seed + obj_idx * 1000 + cluster_idx, verbose=False)
 
             if result.X is not None and len(result.X) > 0:
                 # Get the first (best) solution
@@ -621,7 +621,7 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
 # MAIN PFES+SAMOTA ALGORITHM
 # ============================================================================
 
-def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
+def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, seed=0):
     """
     PFES + SAMOTA Integration on ADAS1
 
@@ -792,7 +792,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
 
         gs_start_evals = eval_count
         gs_candidates = global_search_nsga3(X_array, F_array, uncovered_objectives,
-                                            pop_size=30, n_gen=50, top_k=1)
+                                            pop_size=30, n_gen=50, top_k=1, seed=seed)
         logger.info(f"  GS generated {len(gs_candidates)} candidates")
 
         gs_violations_before = len(archive)
@@ -852,7 +852,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
         logger.info(f"  Running LS with uncovered objectives: {uncovered_objectives}")
 
         ls_start_evals = eval_count
-        ls_candidates = local_search_phase(X_array, F_array, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20)
+        ls_candidates = local_search_phase(X_array, F_array, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=seed)
         logger.info(f"  LS generated {len(ls_candidates)} candidates")
 
         ls_violations_before = len(archive)
@@ -1007,7 +1007,11 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900):
 
 
 if __name__ == "__main__":
-    results = pfes_samota(max_iterations=1000, budget=900)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seed", type=int, default=0, help="Base random seed for NSGA3")
+    args = parser.parse_args()
+    results = pfes_samota(max_iterations=1000, budget=900, seed=args.seed)
 
     print("\n✓ Test completed!")
     print(json.dumps(results, indent=2))

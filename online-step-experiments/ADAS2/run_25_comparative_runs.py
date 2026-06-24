@@ -58,7 +58,7 @@ def run_pfes_baseline(run_num, out_base="results_25runs_pfes"):
     return ok
 
 
-def run_pfes_samota(run_num, out_base="results_25runs_samota"):
+def run_pfes_samota(run_num, out_base="results_25runs_samota_seeded"):
     run_dir = os.path.join(out_base, f"run_{run_num}")
     if os.path.exists(os.path.join(run_dir, "score_NSGA3_1.csv")):
         print(f"  PFES+SAMOTA run {run_num}: already exists, skipping.")
@@ -68,7 +68,7 @@ def run_pfes_samota(run_num, out_base="results_25runs_samota"):
         shutil.rmtree("pfes_samota_baseline")
 
     banner(f"PFES+SAMOTA  run {run_num}/{N_RUNS}")
-    result = subprocess.run(["python3", "PFES_SAMOTA.py"])
+    result = subprocess.run(["python3", "PFES_SAMOTA.py", "--seed", str(run_num)])
     ok = result.returncode == 0
 
     if ok and os.path.exists("pfes_samota_baseline"):
