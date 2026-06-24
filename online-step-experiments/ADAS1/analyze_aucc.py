@@ -25,9 +25,10 @@ ALGORITHMS = {
     "PFES Baseline": os.path.join(BASE_DIR, "results_25runs_pfes",          "run_*"),
     "PFES+SAMOTA":   os.path.join(BASE_DIR, "results_25runs_samota_seeded", "run_*"),
 }
+_HOME = os.path.expanduser("~")
 FALLBACK_ALGORITHMS = {
-    "PFES Baseline": os.path.join(BASE_DIR, "results_10runs_pfes",    "run_*"),
-    "PFES+SAMOTA":   os.path.join(BASE_DIR, "results_25runs_samota",  "run_*"),
+    "PFES Baseline": os.path.join(_HOME, "results_25runs_pfes",   "run_*"),
+    "PFES+SAMOTA":   os.path.join(_HOME, "results_25runs_samota", "run_*"),
 }
 
 COLORS = {

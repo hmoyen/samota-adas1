@@ -43,15 +43,16 @@ ALGORITHMS = [
     ),
 ]
 
+_HOME = os.path.expanduser("~")
 FALLBACK_ALGORITHMS = [
     (
         "PFES Baseline",
-        os.path.join(BASE_DIR, "results_10runs_pfes", "run_*"),
+        os.path.join(_HOME, "results_25runs_pfes", "run_*"),
         "#2196F3",
     ),
     (
         "PFES+SAMOTA",
-        os.path.join(BASE_DIR, "results_25runs_samota", "run_*"),
+        os.path.join(_HOME, "results_25runs_samota", "run_*"),
         "#FF9800",
     ),
 ]
