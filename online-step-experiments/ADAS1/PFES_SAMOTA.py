@@ -721,12 +721,19 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
             logger.debug(f"  ART progress: {i+1}/300, evals: {eval_count}, violations found: {len(archive)}")
 
     phase1_evals = eval_count - phase1_start_evals
-    print(f"✓ Phase 1 complete: {phase1_evals} evaluations, {len(archive)} violations found")
-    logger.info(f"✓ Phase 1 complete: {phase1_evals} ART evaluations, {len(archive)} violations found")
+    art_violations = len(archive)   # violations found purely in ART phase
+    print(f"✓ Phase 1 complete: {phase1_evals} evaluations, {art_violations} violations found")
+    logger.info(f"✓ Phase 1 complete: {phase1_evals} ART evaluations, {art_violations} violations found")
 
     X_array = np.array(database_X)
     F_array = np.array(database_F)  # RAW estimates (for surrogates)
     F_processed = np.array(database_processed)  # Processed scores (for violation checking)
+
+    # Hit rate accumulators for Phase 2
+    gs_total_evals = 0
+    gs_total_violations = 0
+    ls_total_evals = 0
+    ls_total_violations = 0
 
     # ========================================================================
     # PHASE 2: ITERATIVE GS + LS
@@ -840,6 +847,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         gs_violations_found = len(archive) - gs_violations_before
         current_best = np.min(np.array(database_processed), axis=0)
         logger.info(f"    GS post-eval best scores per obj: {[f'V{i}={current_best[i]:.6f}' for i in uncovered_objectives]}")
+        gs_total_evals += gs_evals_used
+        gs_total_violations += gs_violations_found
         print(f"    GS: {len(gs_candidates)} candidates generated, {gs_evals_used} evaluated, {gs_violations_found} new violations")
         logger.info(f"    GS: {len(gs_candidates)} candidates, {gs_evals_used} evals, {gs_violations_found} new violations, total violations: {len(archive)}")
 
@@ -899,6 +908,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         ls_violations_found = len(archive) - ls_violations_before
         current_best = np.min(np.array(database_processed), axis=0)
         logger.info(f"    LS post-eval best scores per obj: {[f'V{i}={current_best[i]:.6f}' for i in uncovered_objectives]}")
+        ls_total_evals += ls_evals_used
+        ls_total_violations += ls_violations_found
         print(f"    LS: {len(ls_candidates)} candidates generated, {ls_evals_used} evaluated, {ls_violations_found} new violations")
         logger.info(f"    LS: {len(ls_candidates)} candidates, {ls_evals_used} evals, {ls_violations_found} new violations, total violations: {len(archive)}")
         print(f"    Total evals: {eval_count}")
@@ -992,6 +1003,30 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
     )
     F_df.to_csv('pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv")
+
+    # Save hit rate summary — measures how useful the surrogate guidance is
+    # Hit rate = fraction of surrogate-selected candidates that produce a violation
+    art_hit_rate = art_violations / phase1_evals if phase1_evals > 0 else 0.0
+    gs_hit_rate  = gs_total_violations / gs_total_evals  if gs_total_evals  > 0 else 0.0
+    ls_hit_rate  = ls_total_violations / ls_total_evals  if ls_total_evals  > 0 else 0.0
+    phase2_evals = gs_total_evals + ls_total_evals
+    phase2_violations = gs_total_violations + ls_total_violations
+    phase2_hit_rate = phase2_violations / phase2_evals if phase2_evals > 0 else 0.0
+
+    hit_rate_data = {
+        "phase":           ["ART (random)",  "GS (surrogate)", "LS (surrogate)", "Phase2 (GS+LS)"],
+        "evals":           [phase1_evals,    gs_total_evals,   ls_total_evals,   phase2_evals],
+        "violations":      [art_violations,  gs_total_violations, ls_total_violations, phase2_violations],
+        "hit_rate":        [art_hit_rate,    gs_hit_rate,      ls_hit_rate,      phase2_hit_rate],
+    }
+    hit_rate_df = pd.DataFrame(hit_rate_data)
+    hit_rate_df.to_csv("pfes_samota_baseline/hit_rate_NSGA3_0.csv", index=False)
+    print("✓ Saved: pfes_samota_baseline/hit_rate_NSGA3_0.csv")
+    print(f"\nSurrogate hit rates:")
+    print(f"  ART (random baseline): {art_hit_rate:.3f}  ({art_violations}/{phase1_evals})")
+    print(f"  GS  (surrogate-guided): {gs_hit_rate:.3f}  ({gs_total_violations}/{gs_total_evals})")
+    print(f"  LS  (surrogate-guided): {ls_hit_rate:.3f}  ({ls_total_violations}/{ls_total_evals})")
+    print(f"  Surrogate lift over random: {(phase2_hit_rate/art_hit_rate - 1)*100:.1f}%" if art_hit_rate > 0 else "  (no ART violations to compare against)")
 
     return {
         'elapsed': elapsed,
