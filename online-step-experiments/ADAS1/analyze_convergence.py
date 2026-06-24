@@ -41,14 +41,8 @@ ALGORITHMS = [
         os.path.join(BASE_DIR, "results_25runs_samota_seeded", "run_*"),
         "#FF9800",
     ),
-    (
-        "PFES+SAMOTA+EI",
-        os.path.join(BASE_DIR, "results_25runs_ei", "run_*"),
-        "#4CAF50",
-    ),
 ]
 
-# Fallback to older directories if seeded runs not available yet
 FALLBACK_ALGORITHMS = [
     (
         "PFES Baseline",
@@ -59,11 +53,6 @@ FALLBACK_ALGORITHMS = [
         "PFES+SAMOTA",
         os.path.join(BASE_DIR, "results_25runs_samota", "run_*"),
         "#FF9800",
-    ),
-    (
-        "PFES+SAMOTA+EI",
-        os.path.join(BASE_DIR, "pfes_samota_ei"),
-        "#4CAF50",
     ),
 ]
 
