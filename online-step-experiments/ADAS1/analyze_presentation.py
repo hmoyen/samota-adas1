@@ -323,11 +323,15 @@ for cfg in ALGORITHMS:
     aucc_m = metrics[name]["aucc_vals"].mean()
     ax.plot(evals, mean, color=color, lw=2,
             label=f"{name}  (AUCC={aucc_m:.3f})")
-    ax.fill_between(evals, mean - std, mean + std, color=color, alpha=0.15)
+    # Clip band to valid range [0, n_reachable] — mean±std can exceed bounds
+    upper = np.clip(mean + std, 0, len(REACHABLE))
+    lower = np.clip(mean - std, 0, len(REACHABLE))
+    ax.fill_between(evals, lower, upper, color=color, alpha=0.15)
 
 ax.set_xlabel("Evaluations", fontsize=12)
 ax.set_ylabel(f"Requirements covered (out of {len(REACHABLE)})", fontsize=11)
 ax.set_title("Requirement Coverage Over Time\n(Area under this curve = AUCC)", fontsize=12)
+ax.set_ylim(0, len(REACHABLE) + 0.1)
 ax.legend(fontsize=10)
 ax.grid(alpha=0.3)
 
