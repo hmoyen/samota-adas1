@@ -81,7 +81,7 @@ def run_pfes_samota(run_num, out_base="results_25runs_samota"):
         shutil.rmtree("pfes_samota_baseline")
 
     banner(f"PFES+SAMOTA  run {run_num}/{N_RUNS}")
-    result = subprocess.run(["python3", "PFES_SAMOTA.py"])
+    result = subprocess.run(["python3", "PFES_SAMOTA.py", "--seed", str(run_num)])
     ok = result.returncode == 0
 
     if ok and os.path.exists("pfes_samota_baseline"):
