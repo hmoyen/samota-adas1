@@ -82,7 +82,15 @@ def load_reqs(run_dir):
     if os.path.exists(f_path):
         df = pd.read_csv(f_path, header=None)
         df = df.apply(pd.to_numeric, errors="coerce").dropna()
-        return (df.values < 0).astype(int)
+        F = df.values
+        if F.shape[1] == N_REQ:
+            return (F < 0).astype(int)
+        # SAMOTA 5-col format: col0=R0, col1=R0(dup), col2/3=unused, col4=R1&R2
+        R = np.zeros((F.shape[0], N_REQ), dtype=int)
+        R[:, 0] = (F[:, 0] < 0).astype(int)
+        R[:, 1] = (F[:, -1] < 0).astype(int)
+        R[:, 2] = (F[:, -1] < 0).astype(int)
+        return R
     return None
 
 

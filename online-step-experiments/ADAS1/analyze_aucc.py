@@ -60,7 +60,16 @@ def load_runs(pattern):
                 continue
             df = pd.read_csv(f_csvs[0], header=None)
             df = df.apply(pd.to_numeric, errors="coerce").dropna()
-            R = (df.values < 0).astype(int)
+            F = df.values
+            n_req_expected = 3  # ADAS1 has 3 requirements
+            if F.shape[1] == n_req_expected:
+                R = (F < 0).astype(int)
+            else:
+                # SAMOTA 5-col format: col0=R0, col1=R0(dup), col2/3=unused, col4=R1&R2
+                R = np.zeros((F.shape[0], n_req_expected), dtype=int)
+                R[:, 0] = (F[:, 0] < 0).astype(int)
+                R[:, 1] = (F[:, -1] < 0).astype(int)
+                R[:, 2] = (F[:, -1] < 0).astype(int)
         runs.append(R)
     return runs
 

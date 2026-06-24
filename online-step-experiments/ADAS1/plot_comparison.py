@@ -101,7 +101,7 @@ def plot_efficiency_comparison(pfes_results, samota_results, output_dir="plots")
             'Evaluations': r['evals'],
             'Violations': r['violations'],
             'Efficiency': r['efficiency'],
-            'Objectives': r['objectives_covered']
+            'Requirements': r['objectives_covered']
         })
 
     for r in samota_results:
@@ -110,7 +110,7 @@ def plot_efficiency_comparison(pfes_results, samota_results, output_dir="plots")
             'Evaluations': r['evals'],
             'Violations': r['violations'],
             'Efficiency': r['efficiency'],
-            'Objectives': r['objectives_covered']
+            'Requirements': r['objectives_covered']
         })
 
     df_plot = pd.DataFrame(plot_data)
@@ -133,10 +133,10 @@ def plot_efficiency_comparison(pfes_results, samota_results, output_dir="plots")
     axes[1, 0].set_title('Efficiency (Violations/Eval)', fontweight='bold')
     axes[1, 0].grid(axis='y', alpha=0.3)
 
-    # Objectives Covered
-    sns.boxplot(data=df_plot, x='Algorithm', y='Objectives', ax=axes[1, 1], palette=['#1f77b4', '#ff7f0e'])
-    max_obj = int(df_plot['Objectives'].dropna().max()) if df_plot['Objectives'].notna().any() else 6
-    axes[1, 1].set_title(f'Objectives Covered (out of {max_obj})', fontweight='bold')
+    # Requirements Covered
+    sns.boxplot(data=df_plot, x='Algorithm', y='Requirements', ax=axes[1, 1], palette=['#1f77b4', '#ff7f0e'])
+    max_obj = int(df_plot['Requirements'].dropna().max()) if df_plot['Requirements'].notna().any() else 6
+    axes[1, 1].set_title(f'Requirements Covered (out of {max_obj})', fontweight='bold')
     axes[1, 1].set_ylim(0, max_obj + 0.5)
     axes[1, 1].grid(axis='y', alpha=0.3)
 
@@ -165,9 +165,9 @@ def create_summary_table(pfes_df, samota_df, output_dir="plots"):
             'Std Violations',
             'Mean Efficiency (v/eval)',
             'Std Efficiency',
-            f'Mean Objectives Covered (/{n_objectives})',
-            f'Min Objectives Covered',
-            f'Max Objectives Covered',
+            f'Mean Requirements Covered (/{n_objectives})',
+            f'Min Requirements Covered',
+            f'Max Requirements Covered',
         ],
         'PFES': [
             f"{pfes_df['total'].mean():.1f}",

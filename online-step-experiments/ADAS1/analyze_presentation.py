@@ -33,20 +33,20 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 REQ_NAMES = ["R0", "R1", "R2"]
 N_REQ     = len(REQ_NAMES)
 
+HOME_DIR = os.path.expanduser("~")
+
 ALGORITHMS = [
     {
         "name":    "PFES Baseline",
         "color":   "#2196F3",
         "primary": os.path.join(BASE_DIR, "results_25runs_pfes", "run_*"),
-        "x_path":  os.path.join(BASE_DIR, "results_25runs_pfes", "run_*",
-                                "X_all_evaluations_NSGA3_0.csv"),
+        "fallback": os.path.join(HOME_DIR, "results_25runs_pfes", "run_*"),
     },
     {
         "name":    "PFES+SAMOTA",
         "color":   "#FF5722",
-        "primary": os.path.join(BASE_DIR, "results_25runs_samota_seeded", "run_*"),
-        "fallback": os.path.join(BASE_DIR, "results_25runs_samota",        "run_*"),
-        "x_path":  None,  # set after resolving primary/fallback
+        "primary": os.path.join(BASE_DIR, "results_25runs_samota", "run_*"),
+        "fallback": os.path.join(HOME_DIR, "results_25runs_samota", "run_*"),
     },
 ]
 
@@ -57,7 +57,12 @@ ALGORITHMS = [
 
 def load_run(run_dir):
     """Return (X, R) where R is binary violation matrix (1=violated).
-    Prefers Reqs_all_evaluations; falls back to F_all_evaluations (score<0)."""
+    Prefers Reqs_all_evaluations; falls back to F_all_evaluations (score<0).
+
+    SAMOTA runs produce F with 5 columns due to a 5-objective NSGA3 setup:
+      col 0 = R0, col 1 = R0 (dup), col 2/3 = unused (0), col 4 = R1/R2.
+    We remap to 3-column R when F has more columns than N_REQ.
+    """
     x_path = os.path.join(run_dir, "X_all_evaluations_NSGA3_0.csv")
     if not os.path.exists(x_path):
         return None, None
@@ -75,7 +80,16 @@ def load_run(run_dir):
             return None, None
         df = pd.read_csv(f_path, header=None)
         df = df.apply(pd.to_numeric, errors="coerce").dropna()
-        R = (df.values < 0).astype(int)
+        F = df.values
+        if F.shape[1] == N_REQ:
+            # PFES format: columns map directly to R0, R1, R2
+            R = (F < 0).astype(int)
+        else:
+            # SAMOTA 5-col format: col0=R0, col1=R0(dup), col2/3=unused, col4=R1&R2
+            R = np.zeros((F.shape[0], N_REQ), dtype=int)
+            R[:, 0] = (F[:, 0] < 0).astype(int)   # R0
+            R[:, 1] = (F[:, -1] < 0).astype(int)  # R1 (last active col)
+            R[:, 2] = (F[:, -1] < 0).astype(int)  # R2 (same signal as R1)
 
     n = min(X.shape[0], R.shape[0])
     return X[:n], R[:n]
