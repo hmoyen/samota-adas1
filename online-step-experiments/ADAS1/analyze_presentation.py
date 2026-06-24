@@ -429,6 +429,7 @@ for ax, (key, title) in zip(axes[:3], apd_panels):
     ax.grid(axis="y", alpha=0.3)
 
 # Violations boxplot (4th panel)
+ax = axes[3]
 data = [metrics[n]["viol_counts"] for n in names]
 bp = ax.boxplot(data, patch_artist=True, widths=0.45)
 for patch, color in zip(bp["boxes"], [metrics[n]["color"] for n in names]):
