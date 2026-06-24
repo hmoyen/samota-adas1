@@ -79,7 +79,7 @@ def load_run(run_dir):
     x_path = os.path.join(run_dir, "X_all_evaluations_NSGA3_0.csv")
     if not os.path.exists(x_path):
         return None, None
-    X = pd.read_csv(x_path, header=None).values.astype(float)
+    X = pd.read_csv(x_path).values.astype(float)
 
     reqs_path = os.path.join(run_dir, "Reqs_all_evaluations_NSGA3_0.csv")
     if os.path.exists(reqs_path):
