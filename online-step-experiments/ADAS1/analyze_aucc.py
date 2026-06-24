@@ -22,14 +22,14 @@ PLOTS_DIR = os.path.join(BASE_DIR, "plots", "aucc")
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 ALGORITHMS = {
-    "PFES Baseline":    os.path.join(BASE_DIR, "results_25runs_pfes",    "run_*"),
-    "PFES+SAMOTA":      os.path.join(BASE_DIR, "results_25runs_samota",  "run_*"),
-    "PFES+SAMOTA+EI":   os.path.join(BASE_DIR, "results_25runs_ei",      "run_*"),
+    "PFES Baseline":    os.path.join(BASE_DIR, "results_25runs_pfes",           "run_*"),
+    "PFES+SAMOTA":      os.path.join(BASE_DIR, "results_25runs_samota_seeded",  "run_*"),
+    "PFES+SAMOTA+EI":   os.path.join(BASE_DIR, "results_25runs_ei",             "run_*"),
 }
 FALLBACK_ALGORITHMS = {
     "PFES Baseline":    os.path.join(BASE_DIR, "results_10runs_pfes",             "run_*"),
-    "PFES+SAMOTA":      os.path.join(BASE_DIR, "results_10runs_samota_900budget", "run_*"),
-    "PFES+SAMOTA+EI":   os.path.join(BASE_DIR, "results_25runs_ei",               "run_*"),
+    "PFES+SAMOTA":      os.path.join(BASE_DIR, "results_25runs_samota",           "run_*"),
+    "PFES+SAMOTA+EI":   os.path.join(BASE_DIR, "results_25runs_ei",              "run_*"),
 }
 
 COLORS = {

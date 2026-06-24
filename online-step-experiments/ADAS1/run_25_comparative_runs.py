@@ -70,7 +70,7 @@ def run_pfes_baseline(run_num, out_base="results_25runs_pfes"):
     return ok
 
 
-def run_pfes_samota(run_num, out_base="results_25runs_samota"):
+def run_pfes_samota(run_num, out_base="results_25runs_samota_seeded"):
     run_dir = os.path.join(out_base, f"run_{run_num}")
     if os.path.exists(os.path.join(run_dir, "score_NSGA3_1.csv")):
         print(f"  PFES+SAMOTA run {run_num}: already exists, skipping.")
@@ -168,7 +168,7 @@ def main():
     if run_samota:
         r = results["samota"]
         print(f"  PFES+SAMOTA:     {r['success']} succeeded, {r['failed']} failed")
-        print(f"    → results_25runs_samota/run_1/ .. run_{args.n}/")
+        print(f"    → results_25runs_samota_seeded/run_1/ .. run_{args.n}/")
     if run_ei:
         r = results["ei"]
         print(f"  PFES+SAMOTA+EI:  {r['success']} succeeded, {r['failed']} failed")
