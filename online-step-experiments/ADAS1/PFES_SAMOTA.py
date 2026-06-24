@@ -735,6 +735,12 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
     ls_total_evals = 0
     ls_total_violations = 0
 
+    # Timing accumulators
+    sim_times   = []   # time per individual simulator call
+    gs_times    = []   # time per GS phase (train + NSGA3), one entry per iteration
+    ls_times    = []   # time per LS phase (train RBF + NSGA3), one entry per iteration
+    timing_rows = []   # one row per iteration for CSV
+
     # ========================================================================
     # PHASE 2: ITERATIVE GS + LS
     # ========================================================================
@@ -798,8 +804,10 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         logger.info(f"  Running GS with uncovered objectives: {uncovered_objectives}")
 
         gs_start_evals = eval_count
+        _gs_t0 = time.time()
         gs_candidates = global_search_nsga3(X_array, F_array, uncovered_objectives,
                                             pop_size=30, n_gen=50, top_k=1, seed=seed)
+        _gs_train_time = time.time() - _gs_t0
         logger.info(f"  GS generated {len(gs_candidates)} candidates")
 
         gs_violations_before = len(archive)
@@ -820,7 +828,9 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
                 logger.info(f"    GS candidate {gs_idx}: SKIPPED (duplicate of existing point)")
                 continue
 
+            _sim_t0 = time.time()
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
+            sim_times.append(time.time() - _sim_t0)
             logger.info(f"    GS candidate {gs_idx}: scores={[f'{s:.6f}' for s in processed_scores]}, violated={[i for i,r in enumerate(reqs_satisfied) if not r]}")
 
             eval_count += 1
@@ -849,7 +859,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         logger.info(f"    GS post-eval best scores per obj: {[f'V{i}={current_best[i]:.6f}' for i in uncovered_objectives]}")
         gs_total_evals += gs_evals_used
         gs_total_violations += gs_violations_found
-        print(f"    GS: {len(gs_candidates)} candidates generated, {gs_evals_used} evaluated, {gs_violations_found} new violations")
+        gs_times.append(_gs_train_time)
+        print(f"    GS: {len(gs_candidates)} candidates generated, {gs_evals_used} evaluated, {gs_violations_found} new violations  [surrogate+NSGA3: {_gs_train_time:.1f}s]")
         logger.info(f"    GS: {len(gs_candidates)} candidates, {gs_evals_used} evals, {gs_violations_found} new violations, total violations: {len(archive)}")
 
         # ====================================================================
@@ -860,7 +871,9 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         logger.info(f"  Running LS with uncovered objectives: {uncovered_objectives}")
 
         ls_start_evals = eval_count
+        _ls_t0 = time.time()
         ls_candidates = local_search_phase(X_array, F_array, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=seed)
+        _ls_train_time = time.time() - _ls_t0
         logger.info(f"  LS generated {len(ls_candidates)} candidates")
 
         ls_violations_before = len(archive)
@@ -881,7 +894,9 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
                 logger.info(f"    LS candidate {ls_idx}: SKIPPED (duplicate of existing point)")
                 continue
 
+            _sim_t0 = time.time()
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
+            sim_times.append(time.time() - _sim_t0)
             logger.info(f"    LS candidate {ls_idx}: scores={[f'{s:.6f}' for s in processed_scores]}, violated={[i for i,r in enumerate(reqs_satisfied) if not r]}")
 
             eval_count += 1
@@ -910,7 +925,29 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         logger.info(f"    LS post-eval best scores per obj: {[f'V{i}={current_best[i]:.6f}' for i in uncovered_objectives]}")
         ls_total_evals += ls_evals_used
         ls_total_violations += ls_violations_found
-        print(f"    LS: {len(ls_candidates)} candidates generated, {ls_evals_used} evaluated, {ls_violations_found} new violations")
+        ls_times.append(_ls_train_time)
+
+        # Break-even: surrogate cost vs simulating all candidates directly
+        avg_sim = float(np.mean(sim_times)) if sim_times else 3.0
+        gs_candidates_screened = len(gs_candidates)  # total candidates NSGA3 generated
+        ls_candidates_screened = len(ls_candidates)
+        gs_breakeven = _gs_train_time / avg_sim   # how many sim calls GS cost
+        ls_breakeven = _ls_train_time / avg_sim
+        timing_rows.append({
+            "iteration":             iteration + 1,
+            "eval_count":            eval_count,
+            "gs_surrogate_time_s":   round(_gs_train_time, 3),
+            "ls_surrogate_time_s":   round(_ls_train_time, 3),
+            "gs_candidates_screened": gs_candidates_screened,
+            "ls_candidates_screened": ls_candidates_screened,
+            "gs_sims_actually_run":  gs_evals_used,
+            "ls_sims_actually_run":  ls_evals_used,
+            "avg_sim_time_s":        round(avg_sim, 3),
+            "gs_equiv_sim_calls":    round(gs_breakeven, 2),
+            "ls_equiv_sim_calls":    round(ls_breakeven, 2),
+            "gs_sims_saved":         round(gs_candidates_screened - gs_evals_used - gs_breakeven, 2),
+        })
+        print(f"    LS: {len(ls_candidates)} candidates generated, {ls_evals_used} evaluated, {ls_violations_found} new violations  [RBF+NSGA3: {_ls_train_time:.1f}s ≈ {ls_breakeven:.1f} sim calls]")
         logger.info(f"    LS: {len(ls_candidates)} candidates, {ls_evals_used} evals, {ls_violations_found} new violations, total violations: {len(archive)}")
         print(f"    Total evals: {eval_count}")
         logger.info(f"  ITERATION {iteration + 1} COMPLETE: evals_used={(eval_count-phase1_evals)}, total_evals={eval_count}")
@@ -1022,6 +1059,24 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
     hit_rate_df = pd.DataFrame(hit_rate_data)
     hit_rate_df.to_csv("pfes_samota_baseline/hit_rate_NSGA3_0.csv", index=False)
     print("✓ Saved: pfes_samota_baseline/hit_rate_NSGA3_0.csv")
+
+    # Save per-iteration timing breakdown
+    if timing_rows:
+        timing_df = pd.DataFrame(timing_rows)
+        timing_df.to_csv("pfes_samota_baseline/timing_NSGA3_0.csv", index=False)
+        avg_sim    = float(np.mean(sim_times)) if sim_times else 0
+        avg_gs     = float(np.mean(gs_times))  if gs_times  else 0
+        avg_ls     = float(np.mean(ls_times))  if ls_times  else 0
+        print("✓ Saved: pfes_samota_baseline/timing_NSGA3_0.csv")
+        print(f"\nSurrogate cost summary:")
+        print(f"  Avg simulator call:   {avg_sim:.2f}s")
+        print(f"  Avg GS phase:         {avg_gs:.2f}s  ≈ {avg_gs/avg_sim:.1f} sim calls" if avg_sim > 0 else f"  Avg GS phase: {avg_gs:.2f}s")
+        print(f"  Avg LS phase:         {avg_ls:.2f}s  ≈ {avg_ls/avg_sim:.1f} sim calls" if avg_sim > 0 else f"  Avg LS phase: {avg_ls:.2f}s")
+        total_surrogate_time = sum(gs_times) + sum(ls_times)
+        total_sim_time       = sum(sim_times)
+        print(f"  Total surrogate overhead: {total_surrogate_time:.1f}s")
+        print(f"  Total simulator time:     {total_sim_time:.1f}s")
+        print(f"  Surrogate overhead ratio: {total_surrogate_time/total_sim_time:.2%}" if total_sim_time > 0 else "")
     print(f"\nSurrogate hit rates:")
     print(f"  ART (random baseline): {art_hit_rate:.3f}  ({art_violations}/{phase1_evals})")
     print(f"  GS  (surrogate-guided): {gs_hit_rate:.3f}  ({gs_total_violations}/{gs_total_evals})")
