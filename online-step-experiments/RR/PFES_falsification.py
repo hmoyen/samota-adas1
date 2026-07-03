@@ -22,27 +22,28 @@ THREADS_COUNT = 1
 conf.MAX_STEPS = 20000
 conf.BATCH_SIZE = 100
 
-conf.MDP_FOLDER = "INPUT/AutonomousDriving_v1"
+conf.MDP_FOLDER = "INPUT/RescueRobot_v3"
 conf.PLOT = False
 conf.MAX_SAMPLES = 100
 
-columns = ["car_speed",
-           "p_x",
-           "p_y",
-           "orientation",
-           "weather",
-           "road_shape"] + ['req_{}'.format(i) for i in range(len(conf.CONSTRAINTS))]
+# Variable names in alphabetical order (matches create_ss_variables sorting)
+RR_VAR_NAMES = sorted(["power", "cruise_speed", "bandwidth", "quality",
+                        "illuminance", "smoke_intensity", "obstacle_size",
+                        "obstacle_distance", "firm_obstacle"])
 
 
-class AutonomousDrivingProblem(ElementwiseProblem):
+class RescueRobotProblem(ElementwiseProblem):
     def __init__(self, n_objectives, n_reqs, **kwargs):
         variables = {
-            "car_speed": Real(bounds=(5.0, 50.0)),
-            "p_x": Real(bounds=(0.0, 10.0)),
-            "p_y": Real(bounds=(0.0, 10.0)),
-            "orientation": Integer(bounds=(-30, 30)),
-            "weather": Integer(bounds=(0, 2)),
-            "road_shape": Integer(bounds=(0, 2)),
+            "power":             Integer(bounds=(0, 100)),
+            "cruise_speed":      Real(bounds=(0, 5)),
+            "bandwidth":         Real(bounds=(10, 50)),
+            "quality":           Integer(bounds=(0, 2)),
+            "illuminance":       Real(bounds=(40, 120000)),
+            "smoke_intensity":   Integer(bounds=(0, 2)),
+            "obstacle_size":     Real(bounds=(0, 120)),
+            "obstacle_distance": Real(bounds=(0, 10)),
+            "firm_obstacle":     Integer(bounds=(0, 1)),
         }
         self.unsatisfied_reqs = [0] * n_reqs
         self.min_scores = [1] * n_objectives
@@ -54,14 +55,11 @@ class AutonomousDrivingProblem(ElementwiseProblem):
         super().__init__(vars=variables, n_obj=n_objectives, **kwargs)
 
     def _evaluate(self, x, out, *args, **kwargs):
-        _, scores, reqs_satisfied, conjunction = helpers.run_mdp([x["car_speed"],
-                                                        x["p_x"],
-                                                        x["p_y"],
-                                                        x["orientation"],
-                                                        x["weather"],
-                                                        x["road_shape"]])
+        # Pass variables in alphabetical order to match create_ss_variables()
+        _, scores, reqs_satisfied, conjunction = helpers.run_mdp(
+            [x[v] for v in RR_VAR_NAMES])
         # Store all evaluations
-        self.all_X.append([x["car_speed"], x["p_x"], x["p_y"], x["orientation"], x["weather"], x["road_shape"]])
+        self.all_X.append([x[v] for v in RR_VAR_NAMES])
         self.all_F.append(scores)
         self.all_reqs.append(reqs_satisfied)
 
@@ -92,7 +90,7 @@ def log_results(n_run, unsatisfied_reqs, unsatisfied_conjunction, best_scores, d
 @click.option('--logdir', default="out", help='Log directory.', type=str)
 @click.option('--seed', default=1, help='Random seed.', type=int)
 def main(size, niterations, nruns, optalg, verbose, logdir, seed):
-    SEED = seed
+    BASE_SEED = seed
     RUNS = nruns
     SIZE = size
     ITERATIONS = niterations
@@ -107,6 +105,7 @@ def main(size, niterations, nruns, optalg, verbose, logdir, seed):
     score_df = pd.DataFrame(columns=[f'V{j}' for j in range(0, OBJECTIVES)])
         
     for run in range(0, RUNS):
+        SEED = BASE_SEED + run  # unique seed per run for statistical independence
 
         if OPTALG == "RANDOM":
             min_scores = [1] * OBJECTIVES
@@ -134,7 +133,7 @@ def main(size, niterations, nruns, optalg, verbose, logdir, seed):
             uns_reqs_df.loc[run] = unsatisfied_reqs + [unsatisfied_conjunction]
             score_df.loc[run] = min_scores
         else:
-            problem = AutonomousDrivingProblem(n_objectives=OBJECTIVES, n_reqs=NREQS)
+            problem = RescueRobotProblem(n_objectives=OBJECTIVES, n_reqs=NREQS)
             ref_dirs = get_reference_directions("das-dennis", OBJECTIVES, n_partitions=2)
 
             if OPTALG == "NSGA3":
@@ -190,7 +189,7 @@ def main(size, niterations, nruns, optalg, verbose, logdir, seed):
             # Save all evaluations for surrogate model training
             if LOGDIR is not None:
                 # Save all X (parameters)
-                X_df = pd.DataFrame(problem.all_X, columns=["car_speed", "p_x", "p_y", "orientation", "weather", "road_shape"])
+                X_df = pd.DataFrame(problem.all_X, columns=RR_VAR_NAMES)
                 X_df.to_csv(f'{LOGDIR}/X_all_evaluations_{OPTALG}_{run}.csv', index=False)
 
                 # Save all F (objectives/scores)
