@@ -113,11 +113,28 @@ def scale_scores_for_surrogates(processed_scores):
 
 # Configuration
 THREADS_COUNT = 1
-conf.MAX_STEPS = 20000
+conf.MAX_STEPS = 10000
 conf.BATCH_SIZE = 100
-conf.MDP_FOLDER = "INPUT/AutonomousDriving_v1"
+conf.MDP_FOLDER = "./INPUT/RescueRobot_v3"
 conf.PLOT = False
 conf.MAX_SAMPLES = 100
+
+# ============================================================================
+# HELPER: Build pymoo variables dynamically from config
+# ============================================================================
+
+def build_pymoo_variables():
+    """Build pymoo variable definitions from config.SS_VARIABLES"""
+    from pymoo.core.variable import Real, Integer
+    variables = {}
+    for var_name in sorted(conf.SS_VARIABLES.keys()):
+        var_config = conf.SS_VARIABLES[var_name]
+        bounds = tuple(var_config["range"])
+        if var_config["domain"] == float:
+            variables[var_name] = Real(bounds=bounds)
+        else:  # int
+            variables[var_name] = Integer(bounds=bounds)
+    return variables
 
 # ============================================================================
 # PHASE 1: ADAPTIVE RANDOM TESTING (ART) - Maximin Sampling
@@ -161,24 +178,26 @@ def art_initial_population(size=300):
     """
     Phase 1: ART - Adaptive Random Testing initialization
     Uses Maximin sampling for maximally diverse population
+    Bounds are read from config.SS_VARIABLES
     """
-    lb = np.array([5.0, 0.0, 0.0, -30, 0, 0])
-    ub = np.array([50.0, 10.0, 10.0, 30, 2, 2])
+    # Build bounds from config (respects any subject's variable ranges)
+    # NOTE: Using insertion order (not sorted) to match create_ss_variables() expectations
+    var_names = sorted(conf.SS_VARIABLES.keys())
+    lb = np.array([conf.SS_VARIABLES[var]["range"][0] for var in var_names])
+    ub = np.array([conf.SS_VARIABLES[var]["range"][1] for var in var_names])
 
     # Generate diverse population
     pop = generate_adaptive_random_population(size, lb, ub, n_candidates=500)
 
-    # Convert to dict format for simulator
+    # Convert to dict format for simulator (using alphabetically sorted order)
     test_cases = []
     for x in pop:
-        test_cases.append({
-            "car_speed": x[0],
-            "p_x": x[1],
-            "p_y": x[2],
-            "orientation": int(x[3]),
-            "weather": int(x[4]),
-            "road_shape": int(x[5]),
-        })
+        test_case = {var_names[i]: x[i] for i in range(len(var_names))}
+        # Convert int types
+        for var in var_names:
+            if conf.SS_VARIABLES[var]["domain"] == int:
+                test_case[var] = int(test_case[var])
+        test_cases.append(test_case)
 
     return test_cases, pop
 
@@ -193,20 +212,13 @@ class GSPerObjectiveProblem(ElementwiseProblem):
     Kept for reference - use GSMultiObjectivePerObjectiveSurrogateProblem instead.
     """
     def __init__(self, obj_ensemble, **kwargs):
-        variables = {
-            "car_speed": Real(bounds=(5.0, 50.0)),
-            "p_x": Real(bounds=(0.0, 10.0)),
-            "p_y": Real(bounds=(0.0, 10.0)),
-            "orientation": Integer(bounds=(-30, 30)),
-            "weather": Integer(bounds=(0, 2)),
-            "road_shape": Integer(bounds=(0, 2)),
-        }
+        variables = build_pymoo_variables()
         super().__init__(vars=variables, n_obj=1, **kwargs)
         self.obj_ensemble = obj_ensemble
+        self.var_names = sorted(conf.SS_VARIABLES.keys())
 
     def _evaluate(self, x, out, *args, **kwargs):
-        params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                          x["orientation"], x["weather"], x["road_shape"]])
+        params = np.array([x[var] for var in self.var_names])
         pred, _ = self.obj_ensemble.predict(params)
         out["F"] = np.array([pred])
 
@@ -227,22 +239,15 @@ class GSMultiObjectivePerObjectiveSurrogateProblem(ElementwiseProblem):
             obj_ensembles_dict: Dictionary {obj_idx: SAMOTAPerObjectiveEnsemble}
             uncovered_objectives: List of objective indices to optimize
         """
-        variables = {
-            "car_speed": Real(bounds=(5.0, 50.0)),
-            "p_x": Real(bounds=(0.0, 10.0)),
-            "p_y": Real(bounds=(0.0, 10.0)),
-            "orientation": Integer(bounds=(-30, 30)),
-            "weather": Integer(bounds=(0, 2)),
-            "road_shape": Integer(bounds=(0, 2)),
-        }
+        variables = build_pymoo_variables()
         n_uncovered = len(uncovered_objectives)
         super().__init__(vars=variables, n_obj=n_uncovered, **kwargs)
         self.obj_ensembles_dict = obj_ensembles_dict
         self.uncovered_objectives = uncovered_objectives
+        self.var_names = sorted(conf.SS_VARIABLES.keys())
 
     def _evaluate(self, x, out, *args, **kwargs):
-        params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                          x["orientation"], x["weather"], x["road_shape"]])
+        params = np.array([x[var] for var in self.var_names])
 
         # Get predictions from each per-objective surrogate
         F = []
@@ -256,7 +261,7 @@ class GSMultiObjectivePerObjectiveSurrogateProblem(ElementwiseProblem):
         out["F"] = np.array(F)
 
 
-def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=20):
+def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=50, top_k=1, seed=0):
     """
     Phase 2a: Global Search - PER-OBJECTIVE surrogate + single-objective GA.
 
@@ -264,17 +269,18 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
       1. Train a separate SAMOTAPerObjectiveEnsemble (GP + Poly + RBF) on that objective's data
       2. Run single-objective NSGA3 to minimize predicted score for that objective
       3. From GA population, select:
-         * Best (lowest predicted score) for this objective
-         * Most uncertain (highest surrogate disagreement) for this objective
-    Result: up to 2 x num_uncovered candidates (best + uncertain per objective)
+         * Best (lowest predicted score) for this objective  [top_k=1 per paper]
+         * Most uncertain (highest surrogate disagreement) for this objective  [top_k=1 per paper]
+    Result: exactly 2 x |uncovered_objectives| candidates (paper Algorithm 3: |T_g| <= |U| x 2)
 
-    Mirrors LS design: per-objective surrogate, per-objective optimization.
+    Paper reference: Algorithm 3, line 12: return T_b ∪ T_n
+    where T_b = 1 best per objective, T_n = 1 most uncertain per objective.
     """
     if len(uncovered_objectives) == 0:
         return []
 
     from SAMOTA_ensemble import SAMOTAPerObjectiveEnsemble
-    obj_names = ["V0", "V1", "V2", "V3", "V4"]
+    obj_names = [f"V{i}" for i in range(len(F_array[0]))]
     selected_params = []
 
     for obj_idx in uncovered_objectives:
@@ -298,15 +304,10 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         )
 
         res = minimize(problem, algorithm, ('n_gen', n_gen),
-                       seed=obj_idx * 100, save_history=False, verbose=False)
+                       seed=seed + obj_idx * 100, save_history=False, verbose=False)
 
         if res.X is None:
             continue
-
-        best_params = None
-        best_score = np.inf
-        uncertain_params = None
-        best_uncertainty = -np.inf
 
         # Handle dict (single solution), 1D array, or 2D array/list (population)
         if isinstance(res.X, dict):
@@ -316,31 +317,26 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         else:
             pop_X = res.X if isinstance(res.X, list) else list(res.X)  # Population
 
+        # Extract all population members with their predicted score and uncertainty
+        var_names_extract = sorted(conf.SS_VARIABLES.keys())
+        scored_pop = []
         for x in pop_X:
-            # Extract 6 parameters: car_speed, p_x, p_y, orientation, weather, road_shape
             if isinstance(x, dict):
-                # Solution is a dictionary (from mixed variables)
-                params = np.array([float(x["car_speed"]), float(x["p_x"]), float(x["p_y"]),
-                                   int(x["orientation"]), int(x["weather"]), int(x["road_shape"])])
+                params = np.array([x[var] if conf.SS_VARIABLES[var]["domain"] == float else int(x[var])
+                                   for var in var_names_extract])
             else:
-                # Solution is an array
-                params = np.array([float(x[0]), float(x[1]), float(x[2]),
-                                   int(x[3]), int(x[4]), int(x[5])])
+                params = np.array(x)
             pred, unc = obj_ensemble.predict(params.reshape(1, -1))
+            scored_pop.append((params, pred, unc))
 
-            if pred < best_score:
-                best_score = pred
-                best_params = params
+        # Select top-K by predicted score (exploitation) + top-K by uncertainty (exploration)
+        scored_pop.sort(key=lambda t: t[1])  # sort by predicted score ascending
+        for params, pred, unc in scored_pop[:top_k]:
+            selected_params.append(params)
 
-            if unc > best_uncertainty:
-                best_uncertainty = unc
-                uncertain_params = params
-
-        if best_params is not None:
-            selected_params.append(best_params)
-
-        if uncertain_params is not None and not np.allclose(uncertain_params, best_params):
-            selected_params.append(uncertain_params)
+        scored_pop.sort(key=lambda t: t[2], reverse=True)  # sort by uncertainty descending
+        for params, pred, unc in scored_pop[:top_k]:
+            selected_params.append(params)
 
     # Remove duplicates across objectives
     unique_params = []
@@ -348,15 +344,14 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         if not any(np.allclose(params, existing) for existing in unique_params):
             unique_params.append(params)
 
+    # Convert to dict format using ALPHABETICALLY SORTED order (matches params array order!)
+    var_names_convert_gs = sorted(conf.SS_VARIABLES.keys())
     candidates = []
     for params in unique_params:
         candidates.append({
-            "car_speed": float(params[0]),
-            "p_x": float(params[1]),
-            "p_y": float(params[2]),
-            "orientation": int(params[3]),
-            "weather": int(params[4]),
-            "road_shape": int(params[5]),
+            var_name: (float(params[i]) if conf.SS_VARIABLES[var_name]["domain"] == float
+                      else int(params[i]))
+            for i, var_name in enumerate(var_names_convert_gs)
         })
 
     return candidates
@@ -390,7 +385,7 @@ def global_search_hybrid(X_array, F_array, uncovered_objectives, pop_size=30, n_
     from SAMOTA_ensemble import SAMOTAPerObjectiveEnsemble
 
     # Step 1: Train PER-OBJECTIVE ensembles (specialized)
-    obj_names = ["V0", "V1", "V2", "V3", "V4"]
+    obj_names = [f"V{i}" for i in range(len(F_array[0]))]
     obj_ensembles_dict = {}
 
     for obj_idx in uncovered_objectives:
@@ -439,15 +434,15 @@ def global_search_hybrid(X_array, F_array, uncovered_objectives, pop_size=30, n_
         pop_X = res.X if isinstance(res.X, list) else list(res.X)  # Population
 
     for x in pop_X:
-        # Extract 6 parameters: car_speed, p_x, p_y, orientation, weather, road_shape
+        # Extract 6 parameters in ALPHABETICALLY SORTED order (matches surrogate training!)
+        var_names_gs = sorted(conf.SS_VARIABLES.keys())
         if isinstance(x, dict):
             # Solution is a dictionary (from mixed variables)
-            params = np.array([float(x["car_speed"]), float(x["p_x"]), float(x["p_y"]),
-                               int(x["orientation"]), int(x["weather"]), int(x["road_shape"])])
+            params = np.array([x[var] if conf.SS_VARIABLES[var]["domain"] == float else int(x[var])
+                             for var in var_names_gs])
         else:
-            # Solution is an array
-            params = np.array([float(x[0]), float(x[1]), float(x[2]),
-                               int(x[3]), int(x[4]), int(x[5])])
+            # Solution is an array - assume it's in alphabetically sorted order from NSGA3
+            params = np.array(x)
 
         # For each objective, track best and most uncertain candidates
         for obj_idx in uncovered_objectives:
@@ -483,16 +478,14 @@ def global_search_hybrid(X_array, F_array, uncovered_objectives, pop_size=30, n_
         if not any(np.allclose(params, existing) for existing in unique_params):
             unique_params.append(params)
 
-    # Convert to dict format
+    # Convert to dict format using ALPHABETICALLY SORTED order (matches params array order!)
+    var_names_convert = sorted(conf.SS_VARIABLES.keys())
     candidates = []
     for params in unique_params:
         candidates.append({
-            "car_speed": float(params[0]),
-            "p_x": float(params[1]),
-            "p_y": float(params[2]),
-            "orientation": int(params[3]),
-            "weather": int(params[4]),
-            "road_shape": int(params[5]),
+            var_name: (float(params[i]) if conf.SS_VARIABLES[var_name]["domain"] == float
+                      else int(params[i]))
+            for i, var_name in enumerate(var_names_convert)
         })
 
     return candidates
@@ -506,21 +499,14 @@ class LSProblem(ElementwiseProblem):
     """Local Search: Uses SINGLE RBF surrogate per cluster (NOT ensemble!)"""
 
     def __init__(self, rbf_model, **kwargs):
-        variables = {
-            "car_speed": Real(bounds=(5.0, 50.0)),
-            "p_x": Real(bounds=(0.0, 10.0)),
-            "p_y": Real(bounds=(0.0, 10.0)),
-            "orientation": Integer(bounds=(-30, 30)),
-            "weather": Integer(bounds=(0, 2)),
-            "road_shape": Integer(bounds=(0, 2)),
-        }
+        variables = build_pymoo_variables()
         super().__init__(vars=variables, n_obj=1, **kwargs)
         self.rbf = rbf_model
+        self.var_names = sorted(conf.SS_VARIABLES.keys())
 
     def _evaluate(self, x, out, *args, **kwargs):
         """Evaluate using SINGLE RBF surrogate (trained on cluster data)"""
-        params = np.array([x["car_speed"], x["p_x"], x["p_y"],
-                          x["orientation"], x["weather"], x["road_shape"]])
+        params = np.array([x[var] for var in self.var_names])
         # Single RBF prediction (NOT ensemble)
         pred_result = self.rbf.predict(params.reshape(1, -1))
         # Handle both array and scalar returns
@@ -528,7 +514,7 @@ class LSProblem(ElementwiseProblem):
         out["F"] = np.array([pred])
 
 
-def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20):
+def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=0):
     """
     Phase 2b: Local Search with CLUSTER-SPECIFIC RBF surrogates (NOT ensemble!)
 
@@ -598,35 +584,34 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
             )
 
             result = minimize(problem, algorithm_ls, ('n_gen', l_max),
-                            seed=obj_idx * 1000 + cluster_idx, verbose=False)
+                            seed=seed + obj_idx * 1000 + cluster_idx, verbose=False)
 
             if result.X is not None and len(result.X) > 0:
                 # Get the first (best) solution
                 best_x = result.X[0] if isinstance(result.X, list) else result.X
 
-                # Handle dict-like access for mixed variables
+                # Handle dict-like access - NSGA3 returns alphabetically sorted variables
+                var_names_ls = sorted(conf.SS_VARIABLES.keys())
                 try:
-                    params = np.array([best_x["car_speed"], best_x["p_x"], best_x["p_y"],
-                                      best_x["orientation"], best_x["weather"], best_x["road_shape"]])
+                    params = np.array([best_x[var] if conf.SS_VARIABLES[var]["domain"] == float else int(best_x[var])
+                                      for var in var_names_ls])
                     selected.append(params)
                 except (TypeError, KeyError):
-                    # If dict access fails, try positional access
+                    # If dict access fails, assume array (shouldn't happen)
                     try:
-                        params = np.array([best_x[0], best_x[1], best_x[2], best_x[3], best_x[4], best_x[5]])
+                        params = np.array(best_x)
                         selected.append(params)
                     except (TypeError, IndexError):
                         pass  # Skip if we can't extract parameters
 
-    # Convert numpy array params to dict format for rest of PFES_SAMOTA
+    # Convert numpy array params to dict format using ALPHABETICALLY SORTED order
+    var_names_convert_ls = sorted(conf.SS_VARIABLES.keys())
     candidates = []
     for params in selected:
         candidates.append({
-            "car_speed": float(params[0]),
-            "p_x": float(params[1]),
-            "p_y": float(params[2]),
-            "orientation": int(params[3]),
-            "weather": int(params[4]),
-            "road_shape": int(params[5]),
+            var_name: (float(params[i]) if conf.SS_VARIABLES[var_name]["domain"] == float
+                      else int(params[i]))
+            for i, var_name in enumerate(var_names_convert_ls)
         })
 
     return candidates
@@ -636,7 +621,7 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
 # MAIN PFES+SAMOTA ALGORITHM
 # ============================================================================
 
-def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
+def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, seed=0, window_size=None):
     """
     PFES + SAMOTA Integration on ADAS1
 
@@ -683,6 +668,7 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
 
     # Track violations per requirement (like PFES baseline: R0, R1, R2)
     unsatisfied_reqs = [0] * len(conf.CONSTRAINTS)  # [R0, R1, R2]
+    first_viol_step = [None] * len(conf.CONSTRAINTS)  # eval index when each req first violated
 
     eval_count = 0
 
@@ -707,17 +693,16 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
             break
 
         # Evaluate via simulator - get RAW outputs (not distances!)
-        params = [
-            test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-            test_case["orientation"], test_case["weather"], test_case["road_shape"]
-        ]
+        # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
+        var_names = sorted(conf.SS_VARIABLES.keys())
+        params = [test_case[var] for var in var_names]
         raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
 
         eval_count += 1
 
         # Store in database (using RAW estimates for surrogates!)
-        x_array = np.array([test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                           test_case["orientation"], test_case["weather"], test_case["road_shape"]])
+        # CRITICAL: Must use ALPHABETICALLY SORTED order to match helpers.create_ss_variables()
+        x_array = np.array([test_case[var] for var in var_names])
         database.append(test_case)
         database_X.append(x_array)
         database_F.append(raw_estimates)  # ← Constraint-mapped fitness (processed_scores)
@@ -727,6 +712,8 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
         for req_idx, req_satisfied in enumerate(reqs_satisfied):
             if not req_satisfied:
                 unsatisfied_reqs[req_idx] += 1
+                if first_viol_step[req_idx] is None:
+                    first_viol_step[req_idx] = eval_count
 
         # Update archive if violates any requirement
         if any(not r for r in reqs_satisfied):
@@ -807,8 +794,13 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
         logger.info(f"  Running GS with uncovered objectives: {uncovered_objectives}")
 
         gs_start_evals = eval_count
-        gs_candidates = global_search_nsga3(X_array, F_array, uncovered_objectives,
-                                            pop_size=30, n_gen=20)
+        # Sliding window: train surrogates only on the most recent N samples
+        if window_size and len(X_array) > window_size:
+            X_train, F_train = X_array[-window_size:], F_array[-window_size:]
+        else:
+            X_train, F_train = X_array, F_array
+        gs_candidates = global_search_nsga3(X_train, F_train, uncovered_objectives,
+                                            pop_size=30, n_gen=50, top_k=1, seed=seed)
         logger.info(f"  GS generated {len(gs_candidates)} candidates")
 
         gs_violations_before = len(archive)
@@ -819,16 +811,22 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
                 break
 
             # Evaluate and get RAW simulator outputs (not distances!)
-            params = [
-                test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                test_case["orientation"], test_case["weather"], test_case["road_shape"]
-            ]
+            # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
+            var_names_local = sorted(conf.SS_VARIABLES.keys())
+            params = [test_case[var] for var in var_names_local]
+
+            # Skip if already in database (surrogate may suggest same point repeatedly)
+            x_candidate = np.array(params)
+            if len(database_X) > 0 and any(np.allclose(x_candidate, ex, atol=1e-3) for ex in database_X):
+                logger.info(f"    GS candidate {gs_idx}: SKIPPED (duplicate of existing point)")
+                continue
+
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
+            logger.info(f"    GS candidate {gs_idx}: scores={[f'{s:.6f}' for s in processed_scores]}, violated={[i for i,r in enumerate(reqs_satisfied) if not r]}")
 
             eval_count += 1
 
-            x_array = np.array([test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                               test_case["orientation"], test_case["weather"], test_case["road_shape"]])
+            x_array = np.array([test_case[var] for var in var_names_local])
             database.append(test_case)
             database_X.append(x_array)
             database_F.append(raw_estimates)  # ← Constraint-mapped fitness (processed_scores)
@@ -838,6 +836,8 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
             for req_idx, req_satisfied in enumerate(reqs_satisfied):
                 if not req_satisfied:
                     unsatisfied_reqs[req_idx] += 1
+                    if first_viol_step[req_idx] is None:
+                        first_viol_step[req_idx] = eval_count
 
             if any(not r for r in reqs_satisfied):
                 archive.append(test_case)
@@ -848,6 +848,9 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
 
         gs_evals_used = eval_count - gs_start_evals
         gs_violations_found = len(archive) - gs_violations_before
+        # Log current best score per uncovered objective (to track if surrogates are making progress)
+        current_best = np.min(np.array(database_processed), axis=0)
+        logger.info(f"    GS post-eval best scores per obj: {[f'V{i}={current_best[i]:.6f}' for i in uncovered_objectives]}")
         print(f"    GS: {len(gs_candidates)} candidates generated, {gs_evals_used} evaluated, {gs_violations_found} new violations")
         logger.info(f"    GS: {len(gs_candidates)} candidates, {gs_evals_used} evals, {gs_violations_found} new violations, total violations: {len(archive)}")
 
@@ -859,7 +862,8 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
         logger.info(f"  Running LS with uncovered objectives: {uncovered_objectives}")
 
         ls_start_evals = eval_count
-        ls_candidates = local_search_phase(X_array, F_array, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20)
+        # Sliding window: use same windowed data as GS
+        ls_candidates = local_search_phase(X_train, F_train, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=seed)
         logger.info(f"  LS generated {len(ls_candidates)} candidates")
 
         ls_violations_before = len(archive)
@@ -870,16 +874,22 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
                 break
 
             # Evaluate and get RAW simulator outputs (not distances!)
-            params = [
-                test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                test_case["orientation"], test_case["weather"], test_case["road_shape"]
-            ]
+            # NOTE: Use insertion order (not sorted) to match create_ss_variables() expectations
+            var_names_local = sorted(conf.SS_VARIABLES.keys())
+            params = [test_case[var] for var in var_names_local]
+
+            # Skip if already in database (surrogate may suggest same point repeatedly)
+            x_candidate = np.array(params)
+            if len(database_X) > 0 and any(np.allclose(x_candidate, ex, atol=1e-3) for ex in database_X):
+                logger.info(f"    LS candidate {ls_idx}: SKIPPED (duplicate of existing point)")
+                continue
+
             raw_estimates, processed_scores, reqs_satisfied = evaluate_test_case(params)
+            logger.info(f"    LS candidate {ls_idx}: scores={[f'{s:.6f}' for s in processed_scores]}, violated={[i for i,r in enumerate(reqs_satisfied) if not r]}")
 
             eval_count += 1
 
-            x_array = np.array([test_case["car_speed"], test_case["p_x"], test_case["p_y"],
-                               test_case["orientation"], test_case["weather"], test_case["road_shape"]])
+            x_array = np.array([test_case[var] for var in var_names_local])
             database.append(test_case)
             database_X.append(x_array)
             database_F.append(raw_estimates)  # ← Constraint-mapped fitness (processed_scores)
@@ -889,6 +899,8 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
             for req_idx, req_satisfied in enumerate(reqs_satisfied):
                 if not req_satisfied:
                     unsatisfied_reqs[req_idx] += 1
+                    if first_viol_step[req_idx] is None:
+                        first_viol_step[req_idx] = eval_count
 
             if any(not r for r in reqs_satisfied):
                 archive.append(test_case)
@@ -896,6 +908,8 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
         X_array = np.array(database_X)
         F_array = np.array(database_F)  # RAW estimates
         F_processed = np.array(database_processed)  # Processed scores
+        current_best = np.min(F_processed, axis=0)
+        logger.info(f"    LS post-eval best scores per obj: {[f'V{i}={current_best[i]:.6f}' for i in uncovered_objectives]}")
 
         ls_evals_used = eval_count - ls_start_evals
         ls_violations_found = len(archive) - ls_violations_before
@@ -958,44 +972,37 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
     # SAVE CSV FILES
     # ========================================================================
 
-    import os
-
-    # Create logdir if it doesn't exist
+    # Create logdir if it doesn't exist (os already imported at top)
     if not os.path.exists("pfes_samota_baseline"):
         os.makedirs("pfes_samota_baseline", exist_ok=True)
 
     # Save best scores (like PFES: score_NSGA3_1.csv)
     best_scores_df = pd.DataFrame({
-        'V0': [min_scores[0]],
-        'V1': [min_scores[1]],
-        'V2': [min_scores[2]],
-        'V3': [min_scores[3]],
-        'V4': [min_scores[4]],
+        f'V{i}': [min_scores[i]] for i in range(len(min_scores))
     })
     best_scores_df.to_csv('pfes_samota_baseline/score_NSGA3_1.csv', index=False)
     print("\n✓ Saved: pfes_samota_baseline/score_NSGA3_1.csv")
 
     # Save requirements breakdown (like PFES: reqs_NSGA3_1.csv)
-    reqs_df = pd.DataFrame({
-        'R0': [unsatisfied_reqs[0]],
-        'R1': [unsatisfied_reqs[1]],
-        'R2': [unsatisfied_reqs[2]],
-        'conjunction': [violations],
-    })
+    # Dynamic: create one R column per constraint
+    reqs_dict = {f'R{i}': [unsatisfied_reqs[i]] for i in range(len(conf.CONSTRAINTS))}
+    reqs_dict['conjunction'] = [violations]
+    reqs_df = pd.DataFrame(reqs_dict)
     reqs_df.to_csv('pfes_samota_baseline/reqs_NSGA3_1.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/reqs_NSGA3_1.csv")
 
-    # Save all evaluations (like PFES)
+    # Save all evaluations (like PFES) - use alphabetically sorted variable order
+    var_names_save = sorted(conf.SS_VARIABLES.keys())
     X_df = pd.DataFrame(
         database_X,
-        columns=['car_speed', 'p_x', 'p_y', 'orientation', 'weather', 'road_shape']
+        columns=var_names_save
     )
     X_df.to_csv('pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv")
 
     F_df = pd.DataFrame(
         database_processed,
-        columns=['V0', 'V1', 'V2', 'V3', 'V4']
+        columns=[f'V{i}' for i in range(len(database_processed[0]) if database_processed else len(conf.CONSTRAINTS))]
     )
     F_df.to_csv('pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv', index=False)
     print("✓ Saved: pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv")
@@ -1006,6 +1013,7 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
         'archive_size': int(len(archive)),
         'violations': int(violations),
         'unsatisfied_reqs': [int(x) for x in unsatisfied_reqs],  # ← R0, R1, R2 breakdown
+        'first_viol_step': first_viol_step,  # [eval_num or None] per requirement
         'objectives_covered': int(objectives_covered),
         'min_scores': [float(x) for x in min_scores.tolist()],
         'efficiency': float(violations / eval_count),
@@ -1013,7 +1021,54 @@ def pfes_samota(max_iterations=30, max_time_seconds=3600, budget=1800):
 
 
 if __name__ == "__main__":
-    results = pfes_samota(max_iterations=30, budget=1800)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seed", type=int, default=1, help="Base random seed (each run uses seed+run_index)")
+    parser.add_argument("--nruns", type=int, default=30, help="Number of independent runs")
+    parser.add_argument("--budget", type=int, default=900, help="Evaluation budget per run")
+    parser.add_argument("--logdir", type=str, default="out", help="Output directory for CSV results")
+    parser.add_argument("--window_size", type=int, default=None,
+                        help="Sliding window size for surrogate training (None = use all data)")
+    args = parser.parse_args()
 
-    print("\n✓ Test completed!")
-    print(json.dumps(results, indent=2))
+    BASE_SEED = args.seed
+    NREQS = len(conf.CONSTRAINTS)
+
+    uns_reqs_df = pd.DataFrame(columns=[f'R{j}' for j in range(NREQS)] + ["conjunction"])
+    score_df = None  # will be sized from first run
+    meta_df = pd.DataFrame(columns=["elapsed_s", "eval_count", "violations",
+                                     "objectives_covered", "efficiency"])
+    timing_df = pd.DataFrame(columns=[f'R{j}_first_eval' for j in range(NREQS)] + ["full_coverage_eval"])
+
+    for run in range(args.nruns):
+        run_seed = BASE_SEED + run
+        print(f"\n{'='*60}")
+        print(f"RUN {run + 1}/{args.nruns}  (seed={run_seed}, window={args.window_size})")
+        print(f"{'='*60}")
+
+        results = pfes_samota(max_iterations=1000, budget=args.budget,
+                              seed=run_seed, window_size=args.window_size)
+
+        if score_df is None:
+            n_scores = len(results['min_scores'])
+            score_df = pd.DataFrame(columns=[f'V{j}' for j in range(n_scores)])
+
+        uns_reqs_df.loc[run] = results['unsatisfied_reqs'] + [results['violations']]
+        score_df.loc[run] = results['min_scores']
+        meta_df.loc[run] = [
+            results['elapsed'],
+            results['eval_count'],
+            results['violations'],
+            results['objectives_covered'],
+            results['efficiency'],
+        ]
+        fvs = results['first_viol_step']
+        full_coverage_eval = max(fvs) if all(v is not None for v in fvs) else None
+        timing_df.loc[run] = fvs + [full_coverage_eval]
+
+    os.makedirs(args.logdir, exist_ok=True)
+    uns_reqs_df.to_csv(f'{args.logdir}/reqs_SAMOTA_{args.nruns}.csv', index=False)
+    score_df.to_csv(f'{args.logdir}/score_SAMOTA_{args.nruns}.csv', index=False)
+    meta_df.to_csv(f'{args.logdir}/meta_SAMOTA_{args.nruns}.csv', index=False)
+    timing_df.to_csv(f'{args.logdir}/timing_SAMOTA_{args.nruns}.csv', index=False)
+    print(f"\n✓ Saved {args.nruns} runs to {args.logdir}/")

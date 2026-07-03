@@ -127,7 +127,7 @@ def log_results(n_run, unsatisfied_reqs, unsatisfied_conjunction, best_scores, d
     print(best_scores)
 
 @click.command()
-@click.option('--size', default=30, help='Population size.', type=int)
+@click.option('--size', default=20, help='Population size.', type=int)
 @click.option('--totbudget', default=900, help='Total budget.', type=int)
 @click.option('--nruns', default=30, help='Runs.', type=int)
 @click.option('--verbose', default=False, help='Verbose.', type=bool)
@@ -140,8 +140,8 @@ def main(size, totbudget, nruns, verbose, logdir, seed):
     BUDGET = totbudget
     VERBOSE = verbose
     LOGDIR = logdir
-    
-    NREQS = 6
+
+    NREQS = 3
     OBJECTIVES = 5
 
     uns_reqs_df = pd.DataFrame(columns=[f'R{j}' for j in range(0, NREQS)] + ["conjunction"])

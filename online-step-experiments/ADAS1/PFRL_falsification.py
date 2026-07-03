@@ -7,10 +7,10 @@ import time
 from copy import deepcopy
 
 THREADS_COUNT = 1
-conf.MAX_STEPS = 10000
+conf.MAX_STEPS = 20000
 conf.BATCH_SIZE = 100
 
-conf.MDP_FOLDER = "INPUT/RescueRobot_v3"
+conf.MDP_FOLDER = "INPUT/AutonomousDriving_v1"
 conf.PLOT = False
 conf.MAX_SAMPLES = 100
 
@@ -63,188 +63,139 @@ class QTable:
 
 # actions
 
-ACTION_DISC = 1
+ACTION_DISC = 4
 
-def a_power_up(ss_values):
+def a_car_speed_up(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["power"]["range"][1] - conf.SS_VARIABLES["power"]["range"][0]) // ACTION_DISC
-    limit = conf.SS_VARIABLES["power"]["range"][1]
+    var_name = "car_speed"
+    step = (conf.SS_VARIABLES[var_name]["range"][1] - conf.SS_VARIABLES[var_name]["range"][0]) / ACTION_DISC
+    limit = conf.SS_VARIABLES[var_name]["range"][1]
     var_index = 0
     new_ss_values[var_index] = new_ss_values[var_index] + step
     if new_ss_values[var_index] > limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_power_down(ss_values):
+def a_car_speed_down(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["power"]["range"][1] - conf.SS_VARIABLES["power"]["range"][0]) // ACTION_DISC
-    limit = conf.SS_VARIABLES["power"]["range"][0]
+    var_name = "car_speed"
+    step = (conf.SS_VARIABLES[var_name]["range"][1] - conf.SS_VARIABLES[var_name]["range"][0]) / ACTION_DISC
+    limit = conf.SS_VARIABLES[var_name]["range"][0]
     var_index = 0
     new_ss_values[var_index] = new_ss_values[var_index] - step
     if new_ss_values[var_index] < limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_cruise_speed_up(ss_values):
+def a_p_x_up(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["cruise_speed"]["range"][1] - conf.SS_VARIABLES["cruise_speed"]["range"][0]) / ACTION_DISC
-    limit = conf.SS_VARIABLES["cruise_speed"]["range"][1]
+    var_name = "p_x"
+    step = (conf.SS_VARIABLES[var_name]["range"][1] - conf.SS_VARIABLES[var_name]["range"][0]) / ACTION_DISC
+    limit = conf.SS_VARIABLES[var_name]["range"][1]
     var_index = 1
     new_ss_values[var_index] = new_ss_values[var_index] + step
     if new_ss_values[var_index] > limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_cruise_speed_down(ss_values):
+def a_p_x_down(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["cruise_speed"]["range"][1] - conf.SS_VARIABLES["cruise_speed"]["range"][0]) / ACTION_DISC
-    limit = conf.SS_VARIABLES["cruise_speed"]["range"][0]
+    var_name = "p_x"
+    step = (conf.SS_VARIABLES[var_name]["range"][1] - conf.SS_VARIABLES[var_name]["range"][0]) / ACTION_DISC
+    limit = conf.SS_VARIABLES[var_name]["range"][0]
     var_index = 1
     new_ss_values[var_index] = new_ss_values[var_index] - step
     if new_ss_values[var_index] < limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_bandwidth_up(ss_values):
+def a_p_y_up(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["bandwidth"]["range"][1] - conf.SS_VARIABLES["bandwidth"]["range"][0]) / ACTION_DISC
-    limit = conf.SS_VARIABLES["bandwidth"]["range"][1]
+    var_name = "p_y"
+    step = (conf.SS_VARIABLES[var_name]["range"][1] - conf.SS_VARIABLES[var_name]["range"][0]) / ACTION_DISC
+    limit = conf.SS_VARIABLES[var_name]["range"][1]
     var_index = 2
     new_ss_values[var_index] = new_ss_values[var_index] + step
     if new_ss_values[var_index] > limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_bandwidth_down(ss_values):
+def a_p_y_down(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = 1
-    limit = conf.SS_VARIABLES["bandwidth"]["range"][0]
+    var_name = "p_y"
+    step = (conf.SS_VARIABLES[var_name]["range"][1] - conf.SS_VARIABLES[var_name]["range"][0]) / ACTION_DISC
+    limit = conf.SS_VARIABLES[var_name]["range"][0]
     var_index = 2
     new_ss_values[var_index] = new_ss_values[var_index] - step
     if new_ss_values[var_index] < limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_quality_up(ss_values):
+def a_orientation_up(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = 1
-    limit = conf.SS_VARIABLES["quality"]["range"][1]
+    var_name = "orientation"
+    step = (conf.SS_VARIABLES[var_name]["range"][1] - conf.SS_VARIABLES[var_name]["range"][0]) / ACTION_DISC
+    limit = conf.SS_VARIABLES[var_name]["range"][1]
     var_index = 3
-    new_ss_values[var_index] = new_ss_values[var_index] + 1
+    new_ss_values[var_index] = new_ss_values[var_index] + step
     if new_ss_values[var_index] > limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_quality_down(ss_values):
+def a_orientation_down(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["quality"]["range"][1] - conf.SS_VARIABLES["quality"]["range"][0]) // ACTION_DISC
-    limit = conf.SS_VARIABLES["quality"]["range"][0]
+    var_name = "orientation"
+    step = (conf.SS_VARIABLES[var_name]["range"][1] - conf.SS_VARIABLES[var_name]["range"][0]) / ACTION_DISC
+    limit = conf.SS_VARIABLES[var_name]["range"][0]
     var_index = 3
-    new_ss_values[var_index] = new_ss_values[var_index] - 1
+    new_ss_values[var_index] = new_ss_values[var_index] - step
     if new_ss_values[var_index] < limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_illuminance_up(ss_values):
+def a_weather_up(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["illuminance"]["range"][1] - conf.SS_VARIABLES["illuminance"]["range"][0]) / ACTION_DISC
-    limit = conf.SS_VARIABLES["illuminance"]["range"][1]
+    var_name = "weather"
+    step = 1
+    limit = conf.SS_VARIABLES[var_name]["range"][1]
     var_index = 4
     new_ss_values[var_index] = new_ss_values[var_index] + step
     if new_ss_values[var_index] > limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_illuminance_down(ss_values):
+def a_weather_down(ss_values):
     new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["illuminance"]["range"][1] - conf.SS_VARIABLES["illuminance"]["range"][0]) / ACTION_DISC
-    limit = conf.SS_VARIABLES["illuminance"]["range"][0]
+    var_name = "weather"
+    step = 1
+    limit = conf.SS_VARIABLES[var_name]["range"][0]
     var_index = 4
     new_ss_values[var_index] = new_ss_values[var_index] - step
     if new_ss_values[var_index] < limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_smoke_intensity_up(ss_values):
+def a_road_shape_up(ss_values):
     new_ss_values = deepcopy(ss_values)
+    var_name = "road_shape"
     step = 1
-    limit = conf.SS_VARIABLES["smoke_intensity"]["range"][1]
+    limit = conf.SS_VARIABLES[var_name]["range"][1]
     var_index = 5
     new_ss_values[var_index] = new_ss_values[var_index] + step
     if new_ss_values[var_index] > limit:
         new_ss_values[var_index] = limit
     return new_ss_values
 
-def a_smoke_intensity_down(ss_values):
+def a_road_shape_down(ss_values):
     new_ss_values = deepcopy(ss_values)
+    var_name = "road_shape"
     step = 1
-    limit = conf.SS_VARIABLES["smoke_intensity"]["range"][0]
+    limit = conf.SS_VARIABLES[var_name]["range"][0]
     var_index = 5
     new_ss_values[var_index] = new_ss_values[var_index] - step
     if new_ss_values[var_index] < limit:
         new_ss_values[var_index] = limit
     return new_ss_values
-
-def a_obstacle_size_up(ss_values):
-    new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["obstacle_size"]["range"][1] - conf.SS_VARIABLES["obstacle_size"]["range"][0]) / ACTION_DISC
-    limit = conf.SS_VARIABLES["obstacle_size"]["range"][1]
-    var_index = 6
-    new_ss_values[var_index] = new_ss_values[var_index] + step
-    if new_ss_values[var_index] > limit:
-        new_ss_values[var_index] = limit
-    return new_ss_values
-
-def a_obstacle_size_down(ss_values):
-    new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["obstacle_size"]["range"][1] - conf.SS_VARIABLES["obstacle_size"]["range"][0]) / ACTION_DISC
-    limit = conf.SS_VARIABLES["obstacle_size"]["range"][0]
-    var_index = 6
-    new_ss_values[var_index] = new_ss_values[var_index] - step
-    if new_ss_values[var_index] < limit:
-        new_ss_values[var_index] = limit
-    return new_ss_values
-
-def a_obstacle_distance_up(ss_values):
-    new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["obstacle_distance"]["range"][1] - conf.SS_VARIABLES["obstacle_distance"]["range"][0]) / ACTION_DISC
-    limit = conf.SS_VARIABLES["obstacle_distance"]["range"][1]
-    var_index = 7
-    new_ss_values[var_index] = new_ss_values[var_index] + step
-    if new_ss_values[var_index] > limit:
-        new_ss_values[var_index] = limit
-    return new_ss_values
-
-def a_obstacle_distance_down(ss_values):
-    new_ss_values = deepcopy(ss_values)
-    step = (conf.SS_VARIABLES["obstacle_distance"]["range"][1] - conf.SS_VARIABLES["obstacle_distance"]["range"][0]) / ACTION_DISC
-    limit = conf.SS_VARIABLES["obstacle_distance"]["range"][0]
-    var_index = 7
-    new_ss_values[var_index] = new_ss_values[var_index] - step
-    if new_ss_values[var_index] < limit:
-        new_ss_values[var_index] = limit
-    return new_ss_values
-
-def a_firm_obstacle_up(ss_values):
-    new_ss_values = deepcopy(ss_values)
-    step = 1
-    limit = conf.SS_VARIABLES["firm_obstacle"]["range"][1]
-    var_index = 8
-    new_ss_values[var_index] = new_ss_values[var_index] + step
-    if new_ss_values[var_index] > limit:
-        new_ss_values[var_index] = limit
-    return new_ss_values
-
-def a_firm_obstacle_down(ss_values):
-    new_ss_values = deepcopy(ss_values)
-    step = 1
-    limit = conf.SS_VARIABLES["firm_obstacle"]["range"][0]
-    var_index = 8
-    new_ss_values[var_index] = new_ss_values[var_index] - step
-    if new_ss_values[var_index] < limit:
-        new_ss_values[var_index] = limit
-    return new_ss_values
-
 
 # helpers
 
@@ -292,8 +243,8 @@ def get_actions(assignment, all_actions):
 
 
 @click.command()
-@click.option('--nepisodes', default=2500, help='Iterations.', type=int)
-@click.option('--nruns', default=30, help='Runs.', type=int)
+@click.option('--nepisodes', default=900, help='Iterations.', type=int)
+@click.option('--nruns', default=1, help='Runs.', type=int)
 @click.option('--verbose', default=False, help='Verbose.', type=bool)
 @click.option('--logdir', default="out", help='Log directory.', type=str)
 @click.option('--seed', default=1, help='Base random seed (each run uses seed+run_index).', type=int)
@@ -305,31 +256,25 @@ def main(nepisodes, nruns, verbose, logdir, seed):
     LOGDIR = logdir
     TARGET_EXPLORATION_PROBA = 0.1
     
-    NREQS = 6
+    NREQS = 3
     OBJECTIVES = 5
 
     uns_reqs_df = pd.DataFrame(columns=[f'R{j}' for j in range(0, NREQS)] + ["conjunction"])
     score_df = pd.DataFrame(columns=[f'V{j}' for j in range(0, OBJECTIVES)])
     timing_df = pd.DataFrame(columns=[f'R{j}_first_eval' for j in range(0, NREQS)] + ["full_coverage_eval"])
-    
-    ss_vars = ["power", "cruise_speed", "bandwidth", 
-               "quality", "illuminance", "smoke_intensity", 
-               "obstacle_size", "obstacle_distance", "firm_obstacle"]
-    
-    disc_step = 2
-    discretization = [disc_step, disc_step, disc_step,
-                      2, disc_step, 2,
-                      disc_step, disc_step, 1]
 
-    actions = [a_power_up, a_power_down, 
-               a_cruise_speed_up, a_cruise_speed_down, 
-               a_bandwidth_up, a_bandwidth_down, 
-               a_quality_up, a_quality_down, 
-               a_illuminance_up, a_illuminance_down, 
-               a_smoke_intensity_up, a_smoke_intensity_down,
-               a_obstacle_size_up, a_obstacle_size_down,
-               a_obstacle_distance_up, a_obstacle_distance_down,
-               a_firm_obstacle_up, a_firm_obstacle_down]
+    ss_vars = ["car_speed", "p_x", "p_y",
+               "orientation", "weather", "road_shape"]
+    disc_step = 8
+    discretization = [disc_step, disc_step, disc_step,
+                      disc_step, 2, 2]
+
+    actions = [a_car_speed_up, a_car_speed_down,
+               a_p_x_up, a_p_x_down,
+               a_p_y_up, a_p_y_down,
+               a_orientation_up, a_orientation_down,
+               a_weather_up, a_weather_down,
+               a_road_shape_up, a_road_shape_down]
 
     for run in range(0, RUNS):
         random.seed(BASE_SEED + run)  # unique seed per run for statistical independence

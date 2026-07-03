@@ -40,7 +40,7 @@ columns = ["power",
 
 
 class RescueRobotProblem(ElementwiseProblem):
-    def __init__(self, n_objectives, n_reqs, **kwargs):
+    def __init__(self, n_objectives, n_reqs, shared_eval_count=None, shared_first_viol=None, **kwargs):
         variables = {
             "power": Integer(bounds=(0, 100)),
             "cruise_speed": Real(bounds=(0, 5)),
@@ -57,6 +57,8 @@ class RescueRobotProblem(ElementwiseProblem):
         self.conjunction = 0
         self.sensitivity = False
         self.var = None
+        self.shared_eval_count = shared_eval_count  # [int] — mutable counter shared across instances
+        self.shared_first_viol = shared_first_viol  # [None|int] per req — shared across instances
         self.reset_random_assignment()
         self.reqs_min_score = [1] * len(conf.CONSTRAINTS)
         super().__init__(vars=variables, n_obj=n_objectives, **kwargs)
@@ -114,12 +116,16 @@ class RescueRobotProblem(ElementwiseProblem):
                                                             x["obstacle_distance"],
                                                             x["firm_obstacle"]])
 
+        if self.shared_eval_count is not None:
+            self.shared_eval_count[0] += 1
         for i in range(0, len(self.min_scores)):
             if scores[i] < self.min_scores[i]:
                 self.min_scores[i] = scores[i]
         for i in range(0, len(self.unsatisfied_reqs)):
             if not reqs_satisfied[i]:
-                self.unsatisfied_reqs[i] +=1
+                self.unsatisfied_reqs[i] += 1
+                if self.shared_first_viol is not None and self.shared_first_viol[i] is None:
+                    self.shared_first_viol[i] = self.shared_eval_count[0]
         self.conjunction += conjunction
         if self.sensitivity:
             self.update_reqs_min_score(reqs_min_score)
@@ -137,11 +143,12 @@ def log_results(n_run, unsatisfied_reqs, unsatisfied_conjunction, best_scores, d
 @click.command()
 @click.option('--size', default=20, help='Population size.', type=int)
 @click.option('--totbudget', default=900, help='Total budget.', type=int)
-@click.option('--nruns', default=2, help='Runs.', type=int)
+@click.option('--nruns', default=30, help='Runs.', type=int)
 @click.option('--verbose', default=False, help='Verbose.', type=bool)
-@click.option('--logdir', default=None, help='Log directory.', type=str)
-def main(size, totbudget, nruns, verbose, logdir):
-    SEED = 1
+@click.option('--logdir', default="out", help='Log directory.', type=str)
+@click.option('--seed', default=1, help='Base random seed (each run uses seed+run_index).', type=int)
+def main(size, totbudget, nruns, verbose, logdir, seed):
+    BASE_SEED = seed
     RUNS = nruns
     SIZE = size
     BUDGET = totbudget
@@ -153,20 +160,26 @@ def main(size, totbudget, nruns, verbose, logdir):
 
     uns_reqs_df = pd.DataFrame(columns=[f'R{j}' for j in range(0, NREQS)] + ["conjunction"])
     score_df = pd.DataFrame(columns=[f'V{j}' for j in range(0, OBJECTIVES)])
-        
-    for run in range(0, RUNS):
+    timing_df = pd.DataFrame(columns=[f'R{j}_first_eval' for j in range(0, NREQS)] + ["full_coverage_eval"])
 
-        problem = RescueRobotProblem(n_objectives=OBJECTIVES, n_reqs=NREQS)
+    for run in range(0, RUNS):
+        SEED = BASE_SEED + run  # unique seed per run for statistical independence
+
+        shared_eval_count = [0]
+        shared_first_viol = [None] * NREQS
+        problem = RescueRobotProblem(n_objectives=OBJECTIVES, n_reqs=NREQS,
+                                     shared_eval_count=shared_eval_count,
+                                     shared_first_viol=shared_first_viol)
         ref_dirs = get_reference_directions("das-dennis", 5, n_partitions=2)
 
         sensitivity_budget = BUDGET // 3
         #focused_test_budget = sensitivity_budget * 2
 
         sensitivity_run_budget = sensitivity_budget // len(conf.SS_VARIABLES)
-        sensitivity_run_iterations = sensitivity_run_budget // SIZE
+        sensitivity_run_iterations = max(1, sensitivity_run_budget // SIZE)
         #focused_test_run_budget = focused_test_budget // NREQS
         focused_test_run_budget = BUDGET // NREQS
-        focused_test_run_budget_iterations = focused_test_run_budget // SIZE
+        focused_test_run_budget_iterations = max(1, focused_test_run_budget // SIZE)
 
         start_time = time.time()
         # start sensitivity analysis
@@ -203,7 +216,9 @@ def main(size, totbudget, nruns, verbose, logdir):
                             sampling=MixedVariableSampling(),
                             mating=MixedVariableMating(eliminate_duplicates=MixedVariableDuplicateElimination()),
                             eliminate_duplicates=MixedVariableDuplicateElimination())
-            problem = RescueRobotProblem(n_objectives=OBJECTIVES, n_reqs=NREQS)
+            problem = RescueRobotProblem(n_objectives=OBJECTIVES, n_reqs=NREQS,
+                                         shared_eval_count=shared_eval_count,
+                                         shared_first_viol=shared_first_viol)
             res = minimize(problem,
                             algorithm,
                             ('n_gen', focused_test_run_budget_iterations),
@@ -219,10 +234,13 @@ def main(size, totbudget, nruns, verbose, logdir):
         log_results(run, unsatisfied_reqs_total, conjunction_total, min_scores_total, time.time() - start_time)
         uns_reqs_df.loc[run] = unsatisfied_reqs_total + [conjunction_total]
         score_df.loc[run] = min_scores_total
+        full_coverage_eval = max(shared_first_viol) if all(v is not None for v in shared_first_viol) else None
+        timing_df.loc[run] = shared_first_viol + [full_coverage_eval]
 
     if LOGDIR is not None:
         uns_reqs_df.to_csv(f'{LOGDIR}/reqs_FOC_{RUNS}.csv', index=False)
         score_df.to_csv(f'{LOGDIR}/score_FOC_{RUNS}.csv', index=False)
+        timing_df.to_csv(f'{LOGDIR}/timing_FOC_{RUNS}.csv', index=False)
 
 if __name__ == "__main__":
     main()

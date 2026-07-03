@@ -247,8 +247,9 @@ def get_actions(assignment, all_actions):
 @click.option('--nruns', default=1, help='Runs.', type=int)
 @click.option('--verbose', default=False, help='Verbose.', type=bool)
 @click.option('--logdir', default="out", help='Log directory.', type=str)
-def main(nepisodes, nruns, verbose, logdir):
-    SEED = 1
+@click.option('--seed', default=1, help='Base random seed (each run uses seed+run_index).', type=int)
+def main(nepisodes, nruns, verbose, logdir, seed):
+    BASE_SEED = seed
     RUNS = nruns
     ITERATIONS = nepisodes
     VERBOSE = verbose
@@ -260,6 +261,7 @@ def main(nepisodes, nruns, verbose, logdir):
 
     uns_reqs_df = pd.DataFrame(columns=[f'R{j}' for j in range(0, NREQS)] + ["conjunction"])
     score_df = pd.DataFrame(columns=[f'V{j}' for j in range(0, OBJECTIVES)])
+    timing_df = pd.DataFrame(columns=[f'R{j}_first_eval' for j in range(0, NREQS)] + ["full_coverage_eval"])
     
     ss_vars = ["car_speed", "p_x", "p_y", 
                "orientation", "weather", "road_shape"]
@@ -275,7 +277,8 @@ def main(nepisodes, nruns, verbose, logdir):
                a_road_shape_up, a_road_shape_down]
 
     for run in range(0, RUNS):
-    
+        random.seed(BASE_SEED + run)  # unique seed per run for statistical independence
+
         q_tables = [None] * OBJECTIVES
         for i in range(0, OBJECTIVES):
             q_tables[i] = QTable(i, ss_vars, len(actions))
@@ -283,6 +286,7 @@ def main(nepisodes, nruns, verbose, logdir):
         min_scores = [1] * OBJECTIVES
         unsatisfied_reqs = [0] * NREQS
         unsatisfied_conjunction = 0
+        first_viol_step = [None] * NREQS
 
         start_time = time.time()
 
@@ -319,7 +323,9 @@ def main(nepisodes, nruns, verbose, logdir):
                     covered_objs.add(i)
             for i in range(0, len(unsatisfied_reqs)):
                 if not reqs_satisfied[i]:
-                    unsatisfied_reqs[i] +=1
+                    unsatisfied_reqs[i] += 1
+                    if first_viol_step[i] is None:
+                        first_viol_step[i] = k + 1  # 1-indexed eval number
             unsatisfied_conjunction += conjunction
 
             for t in q_tables:
@@ -341,10 +347,13 @@ def main(nepisodes, nruns, verbose, logdir):
         log_results(run, unsatisfied_reqs, unsatisfied_conjunction, min_scores, time.time() - start_time)
         uns_reqs_df.loc[run] = unsatisfied_reqs + [unsatisfied_conjunction]
         score_df.loc[run] = min_scores
+        full_coverage_eval = max(first_viol_step) if all(v is not None for v in first_viol_step) else None
+        timing_df.loc[run] = first_viol_step + [full_coverage_eval]
 
         if LOGDIR is not None:
             uns_reqs_df.to_csv(f'{LOGDIR}/reqs_MORLOT_{RUNS}.csv', index=False)
             score_df.to_csv(f'{LOGDIR}/score_MORLOT_{RUNS}.csv', index=False)
+            timing_df.to_csv(f'{LOGDIR}/timing_MORLOT_{RUNS}.csv', index=False)
 
 if __name__ == "__main__":
     main()

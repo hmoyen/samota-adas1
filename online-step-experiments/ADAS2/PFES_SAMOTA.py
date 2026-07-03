@@ -621,7 +621,7 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
 # MAIN PFES+SAMOTA ALGORITHM
 # ============================================================================
 
-def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, seed=0):
+def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, seed=0, logdir=None, window_size=None):
     """
     PFES + SAMOTA Integration on ADAS1
 
@@ -668,6 +668,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
 
     # Track violations per requirement (like PFES baseline: R0, R1, R2)
     unsatisfied_reqs = [0] * len(conf.CONSTRAINTS)  # [R0, R1, R2]
+    first_viol_step = [None] * len(conf.CONSTRAINTS)  # eval index when each req first violated
 
     eval_count = 0
 
@@ -711,6 +712,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         for req_idx, req_satisfied in enumerate(reqs_satisfied):
             if not req_satisfied:
                 unsatisfied_reqs[req_idx] += 1
+                if first_viol_step[req_idx] is None:
+                    first_viol_step[req_idx] = eval_count
 
         # Update archive if violates any requirement
         if any(not r for r in reqs_satisfied):
@@ -791,7 +794,12 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         logger.info(f"  Running GS with uncovered objectives: {uncovered_objectives}")
 
         gs_start_evals = eval_count
-        gs_candidates = global_search_nsga3(X_array, F_array, uncovered_objectives,
+        # Sliding window: train surrogates only on the most recent N samples
+        if window_size and len(X_array) > window_size:
+            X_train, F_train = X_array[-window_size:], F_array[-window_size:]
+        else:
+            X_train, F_train = X_array, F_array
+        gs_candidates = global_search_nsga3(X_train, F_train, uncovered_objectives,
                                             pop_size=30, n_gen=50, top_k=1, seed=seed)
         logger.info(f"  GS generated {len(gs_candidates)} candidates")
 
@@ -828,6 +836,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
             for req_idx, req_satisfied in enumerate(reqs_satisfied):
                 if not req_satisfied:
                     unsatisfied_reqs[req_idx] += 1
+                    if first_viol_step[req_idx] is None:
+                        first_viol_step[req_idx] = eval_count
 
             if any(not r for r in reqs_satisfied):
                 archive.append(test_case)
@@ -852,7 +862,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         logger.info(f"  Running LS with uncovered objectives: {uncovered_objectives}")
 
         ls_start_evals = eval_count
-        ls_candidates = local_search_phase(X_array, F_array, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=seed)
+        # Sliding window: use same windowed data as GS
+        ls_candidates = local_search_phase(X_train, F_train, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=seed)
         logger.info(f"  LS generated {len(ls_candidates)} candidates")
 
         ls_violations_before = len(archive)
@@ -888,6 +899,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
             for req_idx, req_satisfied in enumerate(reqs_satisfied):
                 if not req_satisfied:
                     unsatisfied_reqs[req_idx] += 1
+                    if first_viol_step[req_idx] is None:
+                        first_viol_step[req_idx] = eval_count
 
             if any(not r for r in reqs_satisfied):
                 archive.append(test_case)
@@ -959,40 +972,32 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
     # SAVE CSV FILES
     # ========================================================================
 
-    # Create logdir if it doesn't exist (os already imported at top)
-    if not os.path.exists("pfes_samota_baseline"):
-        os.makedirs("pfes_samota_baseline", exist_ok=True)
+    # Save per-run CSV files if logdir is provided
+    save_dir = logdir if logdir else "pfes_samota_baseline"
+    os.makedirs(save_dir, exist_ok=True)
 
     # Save best scores (like PFES: score_NSGA3_1.csv)
     best_scores_df = pd.DataFrame({
         f'V{i}': [min_scores[i]] for i in range(len(min_scores))
     })
-    best_scores_df.to_csv('pfes_samota_baseline/score_NSGA3_1.csv', index=False)
-    print("\n✓ Saved: pfes_samota_baseline/score_NSGA3_1.csv")
+    best_scores_df.to_csv(f'{save_dir}/score_NSGA3_1.csv', index=False)
 
     # Save requirements breakdown (like PFES: reqs_NSGA3_1.csv)
-    # Dynamic: create one R column per constraint
     reqs_dict = {f'R{i}': [unsatisfied_reqs[i]] for i in range(len(conf.CONSTRAINTS))}
     reqs_dict['conjunction'] = [violations]
     reqs_df = pd.DataFrame(reqs_dict)
-    reqs_df.to_csv('pfes_samota_baseline/reqs_NSGA3_1.csv', index=False)
-    print("✓ Saved: pfes_samota_baseline/reqs_NSGA3_1.csv")
+    reqs_df.to_csv(f'{save_dir}/reqs_NSGA3_1.csv', index=False)
 
-    # Save all evaluations (like PFES) - use alphabetically sorted variable order
+    # Save all evaluations - use alphabetically sorted variable order
     var_names_save = sorted(conf.SS_VARIABLES.keys())
-    X_df = pd.DataFrame(
-        database_X,
-        columns=var_names_save
-    )
-    X_df.to_csv('pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv', index=False)
-    print("✓ Saved: pfes_samota_baseline/X_all_evaluations_NSGA3_0.csv")
+    X_df = pd.DataFrame(database_X, columns=var_names_save)
+    X_df.to_csv(f'{save_dir}/X_all_evaluations_NSGA3_0.csv', index=False)
 
     F_df = pd.DataFrame(
         database_processed,
         columns=[f'V{i}' for i in range(len(database_processed[0]) if database_processed else len(conf.CONSTRAINTS))]
     )
-    F_df.to_csv('pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv', index=False)
-    print("✓ Saved: pfes_samota_baseline/F_all_evaluations_NSGA3_0.csv")
+    F_df.to_csv(f'{save_dir}/F_all_evaluations_NSGA3_0.csv', index=False)
 
     return {
         'elapsed': elapsed,
@@ -1000,6 +1005,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         'archive_size': int(len(archive)),
         'violations': int(violations),
         'unsatisfied_reqs': [int(x) for x in unsatisfied_reqs],  # ← R0, R1, R2 breakdown
+        'first_viol_step': first_viol_step,  # [eval_num or None] per requirement
         'objectives_covered': int(objectives_covered),
         'min_scores': [float(x) for x in min_scores.tolist()],
         'efficiency': float(violations / eval_count),
@@ -1009,9 +1015,52 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=0, help="Base random seed for NSGA3")
+    parser.add_argument("--seed", type=int, default=1, help="Base random seed (each run uses seed+run_index)")
+    parser.add_argument("--nruns", type=int, default=30, help="Number of independent runs")
+    parser.add_argument("--budget", type=int, default=900, help="Evaluation budget per run")
+    parser.add_argument("--logdir", type=str, default="out", help="Output directory for CSV results")
+    parser.add_argument("--window_size", type=int, default=None,
+                        help="Sliding window size for surrogate training (None = use all data)")
     args = parser.parse_args()
-    results = pfes_samota(max_iterations=1000, budget=900, seed=args.seed)
 
-    print("\n✓ Test completed!")
-    print(json.dumps(results, indent=2))
+    BASE_SEED = args.seed
+    NREQS = len(conf.CONSTRAINTS)
+
+    uns_reqs_df = pd.DataFrame(columns=[f'R{j}' for j in range(NREQS)] + ["conjunction"])
+    score_df = None  # will be sized from first run
+    meta_df = pd.DataFrame(columns=["elapsed_s", "eval_count", "violations",
+                                     "objectives_covered", "efficiency"])
+    timing_df = pd.DataFrame(columns=[f'R{j}_first_eval' for j in range(NREQS)] + ["full_coverage_eval"])
+
+    for run in range(args.nruns):
+        run_seed = BASE_SEED + run
+        print(f"\n{'='*60}")
+        print(f"RUN {run + 1}/{args.nruns}  (seed={run_seed}, window={args.window_size})")
+        print(f"{'='*60}")
+
+        results = pfes_samota(max_iterations=1000, budget=args.budget,
+                              seed=run_seed, window_size=args.window_size)
+
+        if score_df is None:
+            n_scores = len(results['min_scores'])
+            score_df = pd.DataFrame(columns=[f'V{j}' for j in range(n_scores)])
+
+        uns_reqs_df.loc[run] = results['unsatisfied_reqs'] + [results['violations']]
+        score_df.loc[run] = results['min_scores']
+        meta_df.loc[run] = [
+            results['elapsed'],
+            results['eval_count'],
+            results['violations'],
+            results['objectives_covered'],
+            results['efficiency'],
+        ]
+        fvs = results['first_viol_step']
+        full_coverage_eval = max(fvs) if all(v is not None for v in fvs) else None
+        timing_df.loc[run] = fvs + [full_coverage_eval]
+
+    os.makedirs(args.logdir, exist_ok=True)
+    uns_reqs_df.to_csv(f'{args.logdir}/reqs_SAMOTA_{args.nruns}.csv', index=False)
+    score_df.to_csv(f'{args.logdir}/score_SAMOTA_{args.nruns}.csv', index=False)
+    meta_df.to_csv(f'{args.logdir}/meta_SAMOTA_{args.nruns}.csv', index=False)
+    timing_df.to_csv(f'{args.logdir}/timing_SAMOTA_{args.nruns}.csv', index=False)
+    print(f"\n✓ Saved {args.nruns} runs to {args.logdir}/")
