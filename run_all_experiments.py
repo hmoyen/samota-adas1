@@ -147,9 +147,7 @@ def run_experiment(benchmark, algorithm, algo_cfg, nruns, budget, seed, results_
                 lf.write(line)
                 lf.flush()
                 output_lines.append(line)
-                # Print progress lines to console (run headers, key metrics)
-                if any(kw in line for kw in ["RUN ", "run ", "Duration", "violations", "saved", "Saved", "Error", "ERROR", "Traceback"]):
-                    print(f"    {line.rstrip()}")
+                print(f"    {line.rstrip()}")
 
             proc.wait()
 
