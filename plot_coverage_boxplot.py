@@ -22,7 +22,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 
 
 # ============================================================================
@@ -86,12 +85,11 @@ def load_pfes_timing(bench_dir: Path, alg: str, budget: int):
             else:
                 first_viol[col] = None
 
-        # Only count reqs that are violatable (violated in this run)
-        violatable = [c for c in req_cols if first_viol[c] is not None]
-        if not violatable:
-            results.append(None)
+        # Consistent with PFRL/FOC/SAMOTA: require ALL reqs covered
+        if all(first_viol[c] is not None for c in req_cols):
+            results.append(max(first_viol[c] for c in req_cols))
         else:
-            results.append(max(first_viol[c] for c in violatable))
+            results.append(None)
 
     return results
 
@@ -195,17 +193,17 @@ def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = No
         patch.set_facecolor(color)
         patch.set_alpha(0.75)
 
-    # Annotate N/A counts
-    for i, (na, box_vals) in enumerate(zip(na_counts, box_data), 1):
-        if na > 0:
-            ax.annotate(f"{na} N/A", xy=(i, ax.get_ylim()[1]),
-                        ha="center", va="bottom", fontsize=8, color="gray")
-
     ax.set_xticks(range(1, len(algs_present) + 1))
     ax.set_xticklabels(labels, fontsize=9)
     ax.set_ylabel("% of budget to first cover all violatable reqs", fontsize=10)
     ax.set_title(f"{benchmark} — Coverage Speed (budget={budget})", fontsize=11)
-    ax.set_ylim(0, 110)
+    ax.set_ylim(0, 110)  # set before annotating so ylim[1] == 110
+
+    # Annotate N/A counts (runs that never achieved full coverage)
+    for i, na in enumerate(na_counts, 1):
+        if na > 0:
+            ax.annotate(f"{na} N/A", xy=(i, 108),
+                        ha="center", va="top", fontsize=8, color="gray")
     ax.axhline(100, color="red", linewidth=0.8, linestyle="--", alpha=0.5, label="Full budget")
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(axis="y", alpha=0.3)
