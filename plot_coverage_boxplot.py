@@ -347,6 +347,64 @@ def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = No
     plt.close(fig)
 
 
+def plot_benchmark_punished(benchmark: str, data: dict, budget: int, save_path: Path = None, n_violatable: int = None):
+    """
+    Single merged box per algorithm: runs that never achieved full coverage
+    are punished at 100% of budget instead of excluded. Complements
+    plot_benchmark() — reads well for algorithms with a decent success rate,
+    but low-success algorithms will show a box pinned near 100% here, which
+    is exactly why plot_benchmark()'s rate+speed split exists as the primary view.
+    """
+    algs_present = [a for a in ALGORITHMS if a in data]
+    if not algs_present:
+        return
+
+    fig, ax = plt.subplots(figsize=(max(6, len(algs_present) * 1.5), 5))
+
+    box_data, na_counts, labels, colors = [], [], [], []
+    for alg in algs_present:
+        pcts = data[alg]
+        punished = [p if p is not None else 100.0 for p in pcts]
+        na_counts.append(sum(1 for p in pcts if p is None))
+        box_data.append(punished)
+        labels.append(ALG_LABELS.get(alg, alg))
+        colors.append(ALG_COLORS.get(alg, "#888888"))
+
+    bp = ax.boxplot(box_data, patch_artist=True, notch=False,
+                    medianprops=dict(color="black", linewidth=2),
+                    whiskerprops=dict(linewidth=1.2),
+                    capprops=dict(linewidth=1.2),
+                    flierprops=dict(marker="o", markersize=4, alpha=0.5))
+
+    for patch, color in zip(bp["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+
+    ax.set_xticks(range(1, len(algs_present) + 1))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("% of budget to first cover all violatable reqs", fontsize=10)
+    title = f"{benchmark} — Coverage Speed, uncovered runs capped at 100% (budget={budget}"
+    title += f", {n_violatable} violatable reqs)" if n_violatable is not None else ")"
+    ax.set_title(title, fontsize=11)
+    ax.set_ylim(0, 110)
+
+    for i, na in enumerate(na_counts, 1):
+        if na > 0:
+            ax.annotate(f"{na} capped", xy=(i, 108),
+                        ha="center", va="top", fontsize=8, color="gray")
+    ax.axhline(100, color="red", linewidth=0.8, linestyle="--", alpha=0.5, label="Full budget")
+    ax.legend(fontsize=8, loc="upper right")
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  Saved: {save_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, na_counts: dict, save_path: Path = None):
     """
     Two panels, minutes-based, all runs:
@@ -468,6 +526,9 @@ def main():
 
         save_path = (results_dir / f"boxplot_coverage_{benchmark}.png") if args.save else None
         plot_benchmark(benchmark, data, args.budget, save_path, n_violatable=len(violatable))
+
+        punished_save_path = (results_dir / f"boxplot_coverage_punished_{benchmark}.png") if args.save else None
+        plot_benchmark_punished(benchmark, data, args.budget, punished_save_path, n_violatable=len(violatable))
 
         # Time-based plots: convert % of budget into actual minutes where possible.
         time_data, saved_data, na_counts = {}, {}, {}
