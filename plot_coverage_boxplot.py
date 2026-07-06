@@ -375,6 +375,11 @@ def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, save_
     ax_time.set_title("Wall-clock time to full coverage", fontsize=11)
     ax_time.set_ylim(bottom=0)
     ax_time.grid(axis="y", alpha=0.3)
+    top1 = ax_time.get_ylim()[1]
+    for i, t in enumerate(time_box, 1):
+        n = len(t) if t and not (len(t) == 1 and np.isnan(t[0])) else 0
+        ax_time.annotate(f"n={n}", xy=(i, top1), xytext=(0, -4), textcoords="offset points",
+                          ha="center", va="top", fontsize=8, color="gray")
 
     bp2 = ax_saved.boxplot(saved_box, patch_artist=True, medianprops=dict(color="black", linewidth=2))
     for patch, color in zip(bp2["boxes"], colors):
@@ -386,6 +391,11 @@ def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, save_
     ax_saved.set_title("Potential time saved (successful runs only)", fontsize=11)
     ax_saved.set_ylim(bottom=0)
     ax_saved.grid(axis="y", alpha=0.3)
+    top2 = ax_saved.get_ylim()[1]
+    for i, s in enumerate(saved_box, 1):
+        n = len(s) if s and not (len(s) == 1 and np.isnan(s[0])) else 0
+        ax_saved.annotate(f"n={n}", xy=(i, top2), xytext=(0, -4), textcoords="offset points",
+                           ha="center", va="top", fontsize=8, color="gray")
 
     fig.suptitle(f"{benchmark} — Time to Cover & Potential Savings", fontsize=12)
     fig.tight_layout()
