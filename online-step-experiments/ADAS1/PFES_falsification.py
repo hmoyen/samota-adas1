@@ -189,7 +189,7 @@ def main(size, niterations, nruns, optalg, verbose, logdir, seed):
             # Save all evaluations for surrogate model training
             if LOGDIR is not None:
                 # Save all X (parameters)
-                X_df = pd.DataFrame(problem.all_X, columns=["car_speed", "p_x", "p_y", "orientation", "weather", "road_shape"])
+                X_df = pd.DataFrame(problem.all_X, columns=sorted(conf.SS_VARIABLES.keys()))
                 X_df.to_csv(f'{LOGDIR}/X_all_evaluations_{OPTALG}_{run}.csv', index=False)
 
                 # Save all F (objectives/scores)
