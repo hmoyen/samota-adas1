@@ -223,27 +223,41 @@ def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = No
         print(f"  No data found for {benchmark}")
         return
 
-    fig, ax = plt.subplots(figsize=(max(6, len(algs_present) * 1.5), 5))
+    fig, (ax_rate, ax_speed) = plt.subplots(
+        1, 2, figsize=(max(9, len(algs_present) * 2.2), 5),
+        gridspec_kw={"width_ratios": [1, 1.4]},
+    )
 
     box_data = []
-    na_counts = []
+    rates = []
+    n_runs = []
     labels = []
     colors = []
 
     for alg in algs_present:
         pcts = data[alg]
-        # Runs that never achieved full coverage are penalized at 100% of budget
-        # (i.e. treated as "spent the whole budget and still didn't cover
-        # everything") rather than dropped, so algorithms that rarely succeed
-        # don't get an artificially flattering distribution from their few lucky runs.
-        punished = [p if p is not None else 100.0 for p in pcts]
-        na = sum(1 for p in pcts if p is None)
-        box_data.append(punished)
-        na_counts.append(na)
+        achieved = [p for p in pcts if p is not None]
+        box_data.append(achieved if achieved else [float("nan")])
+        rates.append(100.0 * len(achieved) / len(pcts) if pcts else 0.0)
+        n_runs.append(len(pcts))
         labels.append(ALG_LABELS.get(alg, alg))
         colors.append(ALG_COLORS.get(alg, "#888888"))
 
-    bp = ax.boxplot(box_data, patch_artist=True, notch=False,
+    # Left panel: coverage rate (% of runs that ever achieved full coverage)
+    bars = ax_rate.bar(range(1, len(algs_present) + 1), rates, color=colors, alpha=0.85)
+    for i, (rate, n) in enumerate(zip(rates, n_runs), 1):
+        n_hit = round(rate / 100.0 * n)
+        ax_rate.annotate(f"{n_hit}/{n}", xy=(i, rate), xytext=(0, 3),
+                          textcoords="offset points", ha="center", fontsize=8)
+    ax_rate.set_xticks(range(1, len(algs_present) + 1))
+    ax_rate.set_xticklabels(labels, fontsize=9)
+    ax_rate.set_ylabel("% of runs achieving full coverage", fontsize=10)
+    ax_rate.set_ylim(0, 105)
+    ax_rate.set_title("Coverage rate", fontsize=11)
+    ax_rate.grid(axis="y", alpha=0.3)
+
+    # Right panel: speed among runs that succeeded, conditional on success
+    bp = ax_speed.boxplot(box_data, patch_artist=True, notch=False,
                     medianprops=dict(color="black", linewidth=2),
                     whiskerprops=dict(linewidth=1.2),
                     capprops=dict(linewidth=1.2),
@@ -253,22 +267,18 @@ def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = No
         patch.set_facecolor(color)
         patch.set_alpha(0.75)
 
-    ax.set_xticks(range(1, len(algs_present) + 1))
-    ax.set_xticklabels(labels, fontsize=9)
-    ax.set_ylabel("% of budget to first cover all violatable reqs", fontsize=10)
-    title = f"{benchmark} — Coverage Speed (budget={budget}"
-    title += f", {n_violatable} violatable reqs)" if n_violatable is not None else ")"
-    ax.set_title(title, fontsize=11)
-    ax.set_ylim(0, 110)  # set before annotating so ylim[1] == 110
+    ax_speed.set_xticks(range(1, len(algs_present) + 1))
+    ax_speed.set_xticklabels(labels, fontsize=9)
+    ax_speed.set_ylabel("% of budget to first cover (successful runs only)", fontsize=10)
+    ax_speed.set_ylim(0, 110)
+    ax_speed.set_title("Coverage speed (conditional on success)", fontsize=11)
+    ax_speed.axhline(100, color="red", linewidth=0.8, linestyle="--", alpha=0.5, label="Full budget")
+    ax_speed.legend(fontsize=8, loc="upper right")
+    ax_speed.grid(axis="y", alpha=0.3)
 
-    # Annotate how many runs never achieved full coverage (and were punished at 100%)
-    for i, na in enumerate(na_counts, 1):
-        if na > 0:
-            ax.annotate(f"{na} capped", xy=(i, 108),
-                        ha="center", va="top", fontsize=8, color="gray")
-    ax.axhline(100, color="red", linewidth=0.8, linestyle="--", alpha=0.5, label="Full budget")
-    ax.legend(fontsize=8, loc="upper right")
-    ax.grid(axis="y", alpha=0.3)
+    title = f"{benchmark} — Coverage Rate & Speed (budget={budget}"
+    title += f", {n_violatable} violatable reqs)" if n_violatable is not None else ")"
+    fig.suptitle(title, fontsize=12)
     fig.tight_layout()
 
     if save_path:
@@ -303,19 +313,22 @@ def main():
         print(f"  'Full coverage' = violating all of {sorted(violatable)} "
               f"({len(violatable)} reqs observed as violated by at least one included algorithm)")
 
-        # Summary table (uncovered runs punished at 100% of budget, see plot_benchmark)
-        print(f"\n  Algorithm  | N runs | Capped@100% | Median % | Mean %  | Std %")
-        print(f"  {'-'*66}")
+        # Summary table: coverage rate (all runs) + speed stats (successful runs only)
+        print(f"\n  Algorithm  | N runs | Coverage rate | Median % | Mean %  | Std %  (speed, successes only)")
+        print(f"  {'-'*90}")
         for alg in ALGORITHMS:
             if alg not in data:
                 continue
             pcts = data[alg]
-            punished = [p if p is not None else 100.0 for p in pcts]
-            na = sum(1 for p in pcts if p is None)
-            med = np.median(punished)
-            mean = np.mean(punished)
-            std = np.std(punished)
-            print(f"  {alg:<10} | {len(pcts):>6} | {na:>11} | {med:>8.1f} | {mean:>7.1f} | {std:>5.1f}")
+            achieved = [p for p in pcts if p is not None]
+            rate = 100.0 * len(achieved) / len(pcts) if pcts else 0.0
+            if achieved:
+                med = np.median(achieved)
+                mean = np.mean(achieved)
+                std = np.std(achieved)
+                print(f"  {alg:<10} | {len(pcts):>6} | {len(achieved):>3}/{len(pcts):<3} ({rate:>5.1f}%) | {med:>8.1f} | {mean:>7.1f} | {std:>5.1f}")
+            else:
+                print(f"  {alg:<10} | {len(pcts):>6} | {0:>3}/{len(pcts):<3} ({rate:>5.1f}%) | {'N/A':>8} | {'N/A':>7} | {'N/A':>5}")
 
         save_path = (results_dir / f"boxplot_coverage_{benchmark}.png") if args.save else None
         plot_benchmark(benchmark, data, args.budget, save_path, n_violatable=len(violatable))
