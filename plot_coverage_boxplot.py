@@ -477,6 +477,68 @@ def plot_benchmark_time_rate(benchmark: str, data: dict, time_data: dict, save_p
     plt.close(fig)
 
 
+def plot_benchmark_expected_time(benchmark: str, data: dict, time_data: dict, save_path: Path = None):
+    """
+    Single bar per algorithm: expected wall-clock minutes to get ONE run that
+    achieves full coverage, assuming you restart on failure (geometric model).
+
+        E[time to success] = (1/p - 1) * mean_fail_time + mean_success_time
+
+    where p = success rate. This punishes low success rates directly (as
+    p -> 0, expected time -> infinity), instead of only reporting the speed
+    of successful runs in isolation, which can look fast even for an
+    algorithm that rarely succeeds at all.
+    """
+    algs_present = [a for a in ALGORITHMS if a in time_data]
+    if not algs_present:
+        return
+
+    fig, ax = plt.subplots(figsize=(max(6, len(algs_present) * 1.8), 5))
+
+    values, labels, colors, infinite = [], [], [], []
+    for alg in algs_present:
+        pcts = data[alg]
+        mins = time_data[alg]
+        success_times = [m for p, m in zip(pcts, mins) if p is not None]
+        fail_times = [m for p, m in zip(pcts, mins) if p is None]
+        p_success = len(success_times) / len(pcts) if pcts else 0.0
+
+        labels.append(ALG_LABELS.get(alg, alg))
+        colors.append(ALG_COLORS.get(alg, "#888888"))
+
+        if p_success == 0:
+            values.append(0.0)
+            infinite.append(True)
+        else:
+            mean_success = np.mean(success_times)
+            mean_fail = np.mean(fail_times) if fail_times else 0.0
+            expected = (1.0 / p_success - 1.0) * mean_fail + mean_success
+            values.append(expected)
+            infinite.append(False)
+
+    bars = ax.bar(range(1, len(algs_present) + 1), values, color=colors, alpha=0.85)
+    top = max(values) if any(v > 0 for v in values) else 1.0
+    for i, (val, inf) in enumerate(zip(values, infinite), 1):
+        label = "never succeeds\n(∞)" if inf else f"{val:.1f} min"
+        ax.annotate(label, xy=(i, val if not inf else 0), xytext=(0, 5),
+                    textcoords="offset points", ha="center", fontsize=9)
+
+    ax.set_xticks(range(1, len(algs_present) + 1))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("Expected minutes to first success (with restarts)", fontsize=10)
+    ax.set_title(f"{benchmark} — Expected Time to First Full Coverage", fontsize=12)
+    ax.set_ylim(0, top * 1.25)
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  Saved: {save_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, na_counts: dict, save_path: Path = None):
     """
     Two panels, minutes-based, all runs:
@@ -618,6 +680,9 @@ def main():
 
         time_rate_save_path = (results_dir / f"boxplot_time_rate_{benchmark}.png") if args.save else None
         plot_benchmark_time_rate(benchmark, data, time_data, time_rate_save_path)
+
+        expected_time_save_path = (results_dir / f"expected_time_{benchmark}.png") if args.save else None
+        plot_benchmark_expected_time(benchmark, data, time_data, expected_time_save_path)
 
         time_save_path = (results_dir / f"boxplot_time_{benchmark}.png") if args.save else None
         plot_benchmark_time(benchmark, time_data, saved_data, na_counts, time_save_path)
