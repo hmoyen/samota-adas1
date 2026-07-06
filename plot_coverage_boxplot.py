@@ -6,8 +6,9 @@ per algorithm across 30 independent runs.
 - X-axis: Algorithm
 - Y-axis: % of budget (0–100%)
 - Each box = distribution across 30 runs
-- Runs where full coverage was never achieved are excluded from the distribution
-  and annotated as "N/A" counts.
+- Runs where full coverage was never achieved are punished at 100% of budget
+  (spent the whole budget without covering everything) and annotated as
+  "capped" counts, rather than being excluded from the distribution.
 
 Usage:
   python plot_coverage_boxplot.py --results_dir results --benchmark ADAS1
@@ -231,9 +232,13 @@ def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = No
 
     for alg in algs_present:
         pcts = data[alg]
-        achieved = [p for p in pcts if p is not None]
-        na = len(pcts) - len(achieved)
-        box_data.append(achieved if achieved else [float("nan")])
+        # Runs that never achieved full coverage are penalized at 100% of budget
+        # (i.e. treated as "spent the whole budget and still didn't cover
+        # everything") rather than dropped, so algorithms that rarely succeed
+        # don't get an artificially flattering distribution from their few lucky runs.
+        punished = [p if p is not None else 100.0 for p in pcts]
+        na = sum(1 for p in pcts if p is None)
+        box_data.append(punished)
         na_counts.append(na)
         labels.append(ALG_LABELS.get(alg, alg))
         colors.append(ALG_COLORS.get(alg, "#888888"))
@@ -256,10 +261,10 @@ def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = No
     ax.set_title(title, fontsize=11)
     ax.set_ylim(0, 110)  # set before annotating so ylim[1] == 110
 
-    # Annotate N/A counts (runs that never achieved full coverage)
+    # Annotate how many runs never achieved full coverage (and were punished at 100%)
     for i, na in enumerate(na_counts, 1):
         if na > 0:
-            ax.annotate(f"{na} N/A", xy=(i, 108),
+            ax.annotate(f"{na} capped", xy=(i, 108),
                         ha="center", va="top", fontsize=8, color="gray")
     ax.axhline(100, color="red", linewidth=0.8, linestyle="--", alpha=0.5, label="Full budget")
     ax.legend(fontsize=8, loc="upper right")
@@ -298,22 +303,19 @@ def main():
         print(f"  'Full coverage' = violating all of {sorted(violatable)} "
               f"({len(violatable)} reqs observed as violated by at least one included algorithm)")
 
-        # Summary table
-        print(f"\n  Algorithm  | N runs | N/A | Median % | Mean %  | Std %")
-        print(f"  {'-'*60}")
+        # Summary table (uncovered runs punished at 100% of budget, see plot_benchmark)
+        print(f"\n  Algorithm  | N runs | Capped@100% | Median % | Mean %  | Std %")
+        print(f"  {'-'*66}")
         for alg in ALGORITHMS:
             if alg not in data:
                 continue
             pcts = data[alg]
-            achieved = [p for p in pcts if p is not None]
-            na = len(pcts) - len(achieved)
-            if achieved:
-                med = np.median(achieved)
-                mean = np.mean(achieved)
-                std = np.std(achieved)
-                print(f"  {alg:<10} | {len(pcts):>6} | {na:>3} | {med:>8.1f} | {mean:>7.1f} | {std:>5.1f}")
-            else:
-                print(f"  {alg:<10} | {len(pcts):>6} | {na:>3} | {'N/A':>8} | {'N/A':>7} | {'N/A':>5}")
+            punished = [p if p is not None else 100.0 for p in pcts]
+            na = sum(1 for p in pcts if p is None)
+            med = np.median(punished)
+            mean = np.mean(punished)
+            std = np.std(punished)
+            print(f"  {alg:<10} | {len(pcts):>6} | {na:>11} | {med:>8.1f} | {mean:>7.1f} | {std:>5.1f}")
 
         save_path = (results_dir / f"boxplot_coverage_{benchmark}.png") if args.save else None
         plot_benchmark(benchmark, data, args.budget, save_path, n_violatable=len(violatable))
