@@ -90,7 +90,7 @@ def log_results(n_run, unsatisfied_reqs, unsatisfied_conjunction, best_scores, d
 @click.option('--logdir', default="out", help='Log directory.', type=str)
 @click.option('--seed', default=1, help='Random seed.', type=int)
 def main(size, niterations, nruns, optalg, verbose, logdir, seed):
-    SEED = seed
+    BASE_SEED = seed
     RUNS = nruns
     SIZE = size
     ITERATIONS = niterations
@@ -105,6 +105,7 @@ def main(size, niterations, nruns, optalg, verbose, logdir, seed):
     score_df = pd.DataFrame(columns=[f'V{j}' for j in range(0, OBJECTIVES)])
         
     for run in range(0, RUNS):
+        SEED = BASE_SEED + run  # unique seed per run for statistical independence
 
         if OPTALG == "RANDOM":
             min_scores = [1] * OBJECTIVES
