@@ -81,7 +81,12 @@ def evaluate_test_case(params):
     config.DEBUG_LEVEL = enums.LogTypes.ERROR
     config.MAX_STEPS = conf.MAX_STEPS
 
-    override_ss_variables = helpers.create_ss_variables(conf.SS_VARIABLES, params)
+    # Clamp candidate values to valid bounds. GS/LS surrogate-generated candidates
+    # bypass pymoo's sampling bounds enforcement, so e.g. an integer variable can
+    # arrive out of its declared range and crash the simulator.
+    clamped_params = helpers.clamp_to_bounds(conf.SS_VARIABLES, params)
+
+    override_ss_variables = helpers.create_ss_variables(conf.SS_VARIABLES, clamped_params)
     mdp = run(override_ss_variables_starting_value=override_ss_variables)
 
     # Extract both raw and processed scores
