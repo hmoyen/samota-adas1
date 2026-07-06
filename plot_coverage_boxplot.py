@@ -136,12 +136,12 @@ def get_violatable_reqs_pfes(bench_dir: Path, prefix: str):
 # Main
 # ============================================================================
 
-def collect_data(results_dir: Path, benchmark: str, budget: int):
+def collect_data(results_dir: Path, benchmark: str, budget: int, algorithms=None):
     """
     Returns dict: alg -> list of full_coverage_pct (float 0-100 or None).
     """
     data = {}
-    for alg in ALGORITHMS:
+    for alg in (algorithms or ALGORITHMS):
         bench_dir = results_dir / benchmark / alg / "out"
         if not bench_dir.exists():
             continue
@@ -223,6 +223,8 @@ def main():
     parser.add_argument("--benchmark", default=None, help="Single benchmark (ADAS1/ADAS2/RR). Default: all.")
     parser.add_argument("--budget", type=int, default=900, help="Evaluation budget per run")
     parser.add_argument("--save", action="store_true", help="Save plots as PNG instead of showing")
+    parser.add_argument("--algorithms", nargs="+", default=None, choices=ALGORITHMS,
+                        help="Restrict to these algorithms only (default: all six)")
     args = parser.parse_args()
 
     results_dir = Path(args.results_dir).resolve()
@@ -230,7 +232,7 @@ def main():
 
     for benchmark in benchmarks:
         print(f"\nProcessing {benchmark}...")
-        data = collect_data(results_dir, benchmark, args.budget)
+        data = collect_data(results_dir, benchmark, args.budget, args.algorithms)
 
         if not data:
             print(f"  No timing data found in {results_dir / benchmark}")
