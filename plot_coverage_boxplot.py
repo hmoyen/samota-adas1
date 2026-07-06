@@ -153,6 +153,59 @@ def get_violatable_reqs_pfes(bench_dir: Path, prefix: str):
     return violatable
 
 
+def load_meta_elapsed_min(bench_dir: Path, alg: str):
+    """
+    Load per-run total wall-clock time (minutes) from meta_{PREFIX}_*.csv.
+    Row order is assumed to match the run order of load_timing_csv/load_pfes_timing
+    (both written incrementally by the same experiment process as each run finishes).
+    Returns None if no meta file exists for this algorithm (e.g. PF/RS today).
+    """
+    if alg not in TIMING_PREFIXES:
+        return None
+    prefix = TIMING_PREFIXES[alg]
+    pattern = str(bench_dir / f"meta_{prefix}_*.csv")
+    files = glob.glob(pattern)
+    if not files:
+        return None
+    files.sort(key=lambda f: int(Path(f).stem.split("_")[-1]) if Path(f).stem.split("_")[-1].isdigit() else 0)
+    df = pd.read_csv(files[-1])
+    if "elapsed_s" not in df.columns:
+        return None
+    return (df["elapsed_s"] / 60.0).tolist()
+
+
+def compute_time_to_cover(pcts, elapsed_min_list, avg_min_override=None):
+    """
+    Convert per-run "% of budget to first cover" into minutes, using either
+    real per-run elapsed time (elapsed_min_list) or a flat average (avg_min_override)
+    for algorithms with no per-run timing data.
+
+    Returns (time_to_cover_min, time_saved_min) — both lists aligned to pcts,
+    with None where pct is None (never covered) or no timing data is available.
+    """
+    if elapsed_min_list is None and avg_min_override is None:
+        return None, None
+
+    n = len(pcts)
+    if elapsed_min_list is None:
+        elapsed_min_list = [avg_min_override] * n
+    elif len(elapsed_min_list) != n:
+        # Can't safely align mismatched run counts.
+        return None, None
+
+    time_to_cover = []
+    time_saved = []
+    for pct, total_min in zip(pcts, elapsed_min_list):
+        if pct is None:
+            time_to_cover.append(None)
+            time_saved.append(None)
+        else:
+            t = pct / 100.0 * total_min
+            time_to_cover.append(t)
+            time_saved.append(total_min - t)
+    return time_to_cover, time_saved
+
+
 def get_violatable_reqs_timing(bench_dir: Path, prefix: str):
     """Return set of req names (e.g. 'R0') violated at least once, from the
     latest timing_*.csv file's R{i}_first_eval columns."""
@@ -289,6 +342,62 @@ def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = No
     plt.close(fig)
 
 
+def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, save_path: Path = None):
+    """
+    Two panels, minutes-based, successful runs only:
+      - left: wall-clock minutes actually spent before first full coverage
+      - right: minutes that could've been saved by stopping the run right there
+    """
+    algs_present = [a for a in ALGORITHMS if a in time_data]
+    if not algs_present:
+        print(f"  No timing data available for a minutes-based plot for {benchmark} "
+              f"(need meta_*.csv or --avg_min_override).")
+        return
+
+    fig, (ax_time, ax_saved) = plt.subplots(1, 2, figsize=(max(9, len(algs_present) * 2.2), 5))
+
+    time_box, saved_box, labels, colors = [], [], [], []
+    for alg in algs_present:
+        t = [x for x in time_data[alg] if x is not None]
+        s = [x for x in saved_data[alg] if x is not None]
+        time_box.append(t if t else [float("nan")])
+        saved_box.append(s if s else [float("nan")])
+        labels.append(ALG_LABELS.get(alg, alg))
+        colors.append(ALG_COLORS.get(alg, "#888888"))
+
+    bp1 = ax_time.boxplot(time_box, patch_artist=True, medianprops=dict(color="black", linewidth=2))
+    for patch, color in zip(bp1["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+    ax_time.set_xticks(range(1, len(algs_present) + 1))
+    ax_time.set_xticklabels(labels, fontsize=9)
+    ax_time.set_ylabel("Minutes to first cover all violatable reqs", fontsize=10)
+    ax_time.set_title("Wall-clock time to full coverage", fontsize=11)
+    ax_time.set_ylim(bottom=0)
+    ax_time.grid(axis="y", alpha=0.3)
+
+    bp2 = ax_saved.boxplot(saved_box, patch_artist=True, medianprops=dict(color="black", linewidth=2))
+    for patch, color in zip(bp2["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+    ax_saved.set_xticks(range(1, len(algs_present) + 1))
+    ax_saved.set_xticklabels(labels, fontsize=9)
+    ax_saved.set_ylabel("Minutes that could've been saved by stopping early", fontsize=10)
+    ax_saved.set_title("Potential time saved (successful runs only)", fontsize=11)
+    ax_saved.set_ylim(bottom=0)
+    ax_saved.grid(axis="y", alpha=0.3)
+
+    fig.suptitle(f"{benchmark} — Time to Cover & Potential Savings", fontsize=12)
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  Saved: {save_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--results_dir", default="results", help="Top-level results directory")
@@ -297,7 +406,17 @@ def main():
     parser.add_argument("--save", action="store_true", help="Save plots as PNG instead of showing")
     parser.add_argument("--algorithms", nargs="+", default=None, choices=ALGORITHMS,
                         help="Restrict to these algorithms only (default: all six)")
+    parser.add_argument("--avg_min_override", nargs="+", default=None,
+                        help="Flat average minutes/run for algorithms with no meta_*.csv "
+                             "timing (e.g. PF=26.2), applied uniformly across that "
+                             "algorithm's runs to estimate wall-clock time to cover.")
     args = parser.parse_args()
+
+    avg_override = {}
+    if args.avg_min_override:
+        for item in args.avg_min_override:
+            alg, val = item.split("=")
+            avg_override[alg] = float(val)
 
     results_dir = Path(args.results_dir).resolve()
     benchmarks = [args.benchmark] if args.benchmark else ["ADAS1", "ADAS2", "RR"]
@@ -332,6 +451,22 @@ def main():
 
         save_path = (results_dir / f"boxplot_coverage_{benchmark}.png") if args.save else None
         plot_benchmark(benchmark, data, args.budget, save_path, n_violatable=len(violatable))
+
+        # Time-based plots: convert % of budget into actual minutes where possible.
+        time_data, saved_data = {}, {}
+        for alg in data:
+            bench_dir = results_dir / benchmark / alg / "out"
+            elapsed_min_list = load_meta_elapsed_min(bench_dir, alg)
+            t2c, saved = compute_time_to_cover(data[alg], elapsed_min_list, avg_override.get(alg))
+            if t2c is not None:
+                time_data[alg] = t2c
+                saved_data[alg] = saved
+            elif alg not in avg_override and elapsed_min_list is None:
+                print(f"  [{alg}] No meta_*.csv or --avg_min_override given — "
+                      f"skipped from the minutes-based plot.")
+
+        time_save_path = (results_dir / f"boxplot_time_{benchmark}.png") if args.save else None
+        plot_benchmark_time(benchmark, time_data, saved_data, time_save_path)
 
     if not args.save:
         print("\nShowing plots interactively (use --save to write PNG files).")
