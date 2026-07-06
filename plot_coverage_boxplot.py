@@ -54,11 +54,13 @@ TIMING_PREFIXES = {"FF": "FOC", "MERLOT": "MORLOT", "SAMOTA": "SAMOTA", "SAMOTA_
 # Loaders
 # ============================================================================
 
-def load_pfes_timing(bench_dir: Path, alg: str, budget: int):
+def load_pfes_timing(bench_dir: Path, alg: str, budget: int, violatable_reqs=None):
     """
     Compute first-coverage eval from per-run Reqs_all_evaluations_{PREFIX}_{run}.csv files.
     Each file has one row per evaluation with boolean columns R0, R1, ..., Rn.
     A violation = R_i == False (requirement NOT satisfied).
+    If violatable_reqs is given, "full coverage" only requires those req columns
+    (rather than every column in the file) to have been violated.
     Returns list of (full_coverage_eval | None) per run, one entry per run found.
     """
     prefix = PFES_PREFIXES[alg]
@@ -71,6 +73,8 @@ def load_pfes_timing(bench_dir: Path, alg: str, budget: int):
     for f in files:
         df = pd.read_csv(f)
         req_cols = [c for c in df.columns if c.startswith("R")]
+        if violatable_reqs is not None:
+            req_cols = [c for c in req_cols if c in violatable_reqs]
         if not req_cols:
             results.append(None)
             continue
@@ -85,7 +89,7 @@ def load_pfes_timing(bench_dir: Path, alg: str, budget: int):
             else:
                 first_viol[col] = None
 
-        # Consistent with PFRL/FOC/SAMOTA: require ALL reqs covered
+        # Require all of the (possibly restricted) req set covered
         if all(first_viol[c] is not None for c in req_cols):
             results.append(max(first_viol[c] for c in req_cols))
         else:
@@ -94,9 +98,14 @@ def load_pfes_timing(bench_dir: Path, alg: str, budget: int):
     return results
 
 
-def load_timing_csv(bench_dir: Path, alg: str):
+def load_timing_csv(bench_dir: Path, alg: str, violatable_reqs=None):
     """
     Load timing_*.csv and return list of (full_coverage_eval | None) per run.
+
+    Recomputes full coverage from the per-req R{i}_first_eval columns rather than
+    trusting the file's own full_coverage_eval column, so it can be restricted to
+    violatable_reqs (requirements actually observed as violated by at least one
+    algorithm being compared) instead of requiring every declared requirement.
     """
     prefix = TIMING_PREFIXES[alg]
     pattern = str(bench_dir / f"timing_{prefix}_*.csv")
@@ -109,14 +118,25 @@ def load_timing_csv(bench_dir: Path, alg: str):
     f = files[-1]
     df = pd.read_csv(f)
 
-    if "full_coverage_eval" not in df.columns:
+    req_cols = [c for c in df.columns if c.endswith("_first_eval")]
+    if violatable_reqs is not None:
+        req_cols = [c for c in req_cols if c[: -len("_first_eval")] in violatable_reqs]
+
+    if not req_cols:
         return [None] * len(df)
 
-    return [None if pd.isna(v) else int(v) for v in df["full_coverage_eval"]]
+    results = []
+    for _, row in df.iterrows():
+        vals = [row[c] for c in req_cols]
+        if any(pd.isna(v) for v in vals):
+            results.append(None)
+        else:
+            results.append(int(max(vals)))
+    return results
 
 
 # ============================================================================
-# Determine violatable requirements across all runs for PFES
+# Determine violatable requirements across all runs, for either data format
 # ============================================================================
 
 def get_violatable_reqs_pfes(bench_dir: Path, prefix: str):
@@ -132,24 +152,59 @@ def get_violatable_reqs_pfes(bench_dir: Path, prefix: str):
     return violatable
 
 
+def get_violatable_reqs_timing(bench_dir: Path, prefix: str):
+    """Return set of req names (e.g. 'R0') violated at least once, from the
+    latest timing_*.csv file's R{i}_first_eval columns."""
+    pattern = str(bench_dir / f"timing_{prefix}_*.csv")
+    files = glob.glob(pattern)
+    if not files:
+        return set()
+
+    files.sort(key=lambda f: int(Path(f).stem.split("_")[-1]) if Path(f).stem.split("_")[-1].isdigit() else 0)
+    df = pd.read_csv(files[-1])
+
+    violatable = set()
+    for col in df.columns:
+        if col.endswith("_first_eval") and df[col].notna().any():
+            violatable.add(col[: -len("_first_eval")])
+    return violatable
+
+
 # ============================================================================
 # Main
 # ============================================================================
 
 def collect_data(results_dir: Path, benchmark: str, budget: int, algorithms=None):
     """
-    Returns dict: alg -> list of full_coverage_pct (float 0-100 or None).
+    Returns (data, violatable_reqs):
+      - data: dict alg -> list of full_coverage_pct (float 0-100 or None)
+      - violatable_reqs: set of req names (e.g. {'R0', 'R2'}) used as the "full
+        coverage" bar -- the union of requirements observed as violated by at
+        least one of the included algorithms that has data present. This is
+        looser than requiring every declared requirement, so benchmarks where
+        some requirements are never violated by anyone still get a meaningful
+        (non-all-N/A) comparison.
     """
-    data = {}
-    for alg in (algorithms or ALGORITHMS):
+    algs = algorithms or ALGORITHMS
+    bench_dirs = {}
+    for alg in algs:
         bench_dir = results_dir / benchmark / alg / "out"
-        if not bench_dir.exists():
-            continue
+        if bench_dir.exists():
+            bench_dirs[alg] = bench_dir
 
+    violatable = set()
+    for alg, bench_dir in bench_dirs.items():
         if alg in PFES_PREFIXES:
-            evals = load_pfes_timing(bench_dir, alg, budget)
+            violatable |= get_violatable_reqs_pfes(bench_dir, PFES_PREFIXES[alg])
         else:
-            evals = load_timing_csv(bench_dir, alg)
+            violatable |= get_violatable_reqs_timing(bench_dir, TIMING_PREFIXES[alg])
+
+    data = {}
+    for alg, bench_dir in bench_dirs.items():
+        if alg in PFES_PREFIXES:
+            evals = load_pfes_timing(bench_dir, alg, budget, violatable_reqs=violatable)
+        else:
+            evals = load_timing_csv(bench_dir, alg, violatable_reqs=violatable)
 
         if not evals:
             continue
@@ -158,10 +213,10 @@ def collect_data(results_dir: Path, benchmark: str, budget: int, algorithms=None
         pcts = [100.0 * e / budget if e is not None else None for e in evals]
         data[alg] = pcts
 
-    return data
+    return data, violatable
 
 
-def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = None):
+def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = None, n_violatable: int = None):
     algs_present = [a for a in ALGORITHMS if a in data]
     if not algs_present:
         print(f"  No data found for {benchmark}")
@@ -196,7 +251,9 @@ def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = No
     ax.set_xticks(range(1, len(algs_present) + 1))
     ax.set_xticklabels(labels, fontsize=9)
     ax.set_ylabel("% of budget to first cover all violatable reqs", fontsize=10)
-    ax.set_title(f"{benchmark} — Coverage Speed (budget={budget})", fontsize=11)
+    title = f"{benchmark} — Coverage Speed (budget={budget}"
+    title += f", {n_violatable} violatable reqs)" if n_violatable is not None else ")"
+    ax.set_title(title, fontsize=11)
     ax.set_ylim(0, 110)  # set before annotating so ylim[1] == 110
 
     # Annotate N/A counts (runs that never achieved full coverage)
@@ -232,11 +289,14 @@ def main():
 
     for benchmark in benchmarks:
         print(f"\nProcessing {benchmark}...")
-        data = collect_data(results_dir, benchmark, args.budget, args.algorithms)
+        data, violatable = collect_data(results_dir, benchmark, args.budget, args.algorithms)
 
         if not data:
             print(f"  No timing data found in {results_dir / benchmark}")
             continue
+
+        print(f"  'Full coverage' = violating all of {sorted(violatable)} "
+              f"({len(violatable)} reqs observed as violated by at least one included algorithm)")
 
         # Summary table
         print(f"\n  Algorithm  | N runs | N/A | Median % | Mean %  | Std %")
@@ -256,7 +316,7 @@ def main():
                 print(f"  {alg:<10} | {len(pcts):>6} | {na:>3} | {'N/A':>8} | {'N/A':>7} | {'N/A':>5}")
 
         save_path = (results_dir / f"boxplot_coverage_{benchmark}.png") if args.save else None
-        plot_benchmark(benchmark, data, args.budget, save_path)
+        plot_benchmark(benchmark, data, args.budget, save_path, n_violatable=len(violatable))
 
     if not args.save:
         print("\nShowing plots interactively (use --save to write PNG files).")
