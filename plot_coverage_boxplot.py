@@ -180,8 +180,13 @@ def compute_time_to_cover(pcts, elapsed_min_list, avg_min_override=None):
     real per-run elapsed time (elapsed_min_list) or a flat average (avg_min_override)
     for algorithms with no per-run timing data.
 
+    Runs that never achieved full coverage are punished: they spent their
+    entire elapsed time and saved nothing (time_to_cover = full run time,
+    time_saved = 0), rather than being dropped, so the plot reflects the real
+    risk of spending the whole budget and still not covering everything.
+
     Returns (time_to_cover_min, time_saved_min) — both lists aligned to pcts,
-    with None where pct is None (never covered) or no timing data is available.
+    or (None, None) if no timing data is available at all for this algorithm.
     """
     if elapsed_min_list is None and avg_min_override is None:
         return None, None
@@ -197,8 +202,8 @@ def compute_time_to_cover(pcts, elapsed_min_list, avg_min_override=None):
     time_saved = []
     for pct, total_min in zip(pcts, elapsed_min_list):
         if pct is None:
-            time_to_cover.append(None)
-            time_saved.append(None)
+            time_to_cover.append(total_min)
+            time_saved.append(0.0)
         else:
             t = pct / 100.0 * total_min
             time_to_cover.append(t)
@@ -342,11 +347,13 @@ def plot_benchmark(benchmark: str, data: dict, budget: int, save_path: Path = No
     plt.close(fig)
 
 
-def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, save_path: Path = None):
+def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, na_counts: dict, save_path: Path = None):
     """
-    Two panels, minutes-based, successful runs only:
-      - left: wall-clock minutes actually spent before first full coverage
-      - right: minutes that could've been saved by stopping the run right there
+    Two panels, minutes-based, all runs:
+      - left: wall-clock minutes spent before first full coverage (runs that
+        never covered everything are punished at their full elapsed time)
+      - right: minutes that could've been saved by stopping the run right
+        there (punished runs count as 0 saved)
     """
     algs_present = [a for a in ALGORITHMS if a in time_data]
     if not algs_present:
@@ -358,10 +365,8 @@ def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, save_
 
     time_box, saved_box, labels, colors = [], [], [], []
     for alg in algs_present:
-        t = [x for x in time_data[alg] if x is not None]
-        s = [x for x in saved_data[alg] if x is not None]
-        time_box.append(t if t else [float("nan")])
-        saved_box.append(s if s else [float("nan")])
+        time_box.append(time_data[alg])
+        saved_box.append(saved_data[alg])
         labels.append(ALG_LABELS.get(alg, alg))
         colors.append(ALG_COLORS.get(alg, "#888888"))
 
@@ -376,9 +381,10 @@ def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, save_
     ax_time.set_ylim(bottom=0)
     ax_time.grid(axis="y", alpha=0.3)
     top1 = ax_time.get_ylim()[1]
-    for i, t in enumerate(time_box, 1):
-        n = len(t) if t and not (len(t) == 1 and np.isnan(t[0])) else 0
-        ax_time.annotate(f"n={n}", xy=(i, top1), xytext=(0, -4), textcoords="offset points",
+    for i, alg in enumerate(algs_present, 1):
+        na = na_counts.get(alg, 0)
+        label = f"n={len(time_data[alg])}" + (f" ({na} capped)" if na else "")
+        ax_time.annotate(label, xy=(i, top1), xytext=(0, -4), textcoords="offset points",
                           ha="center", va="top", fontsize=8, color="gray")
 
     bp2 = ax_saved.boxplot(saved_box, patch_artist=True, medianprops=dict(color="black", linewidth=2))
@@ -388,13 +394,14 @@ def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, save_
     ax_saved.set_xticks(range(1, len(algs_present) + 1))
     ax_saved.set_xticklabels(labels, fontsize=9)
     ax_saved.set_ylabel("Minutes that could've been saved by stopping early", fontsize=10)
-    ax_saved.set_title("Potential time saved (successful runs only)", fontsize=11)
+    ax_saved.set_title("Potential time saved (0 for runs that never covered)", fontsize=11)
     ax_saved.set_ylim(bottom=0)
     ax_saved.grid(axis="y", alpha=0.3)
     top2 = ax_saved.get_ylim()[1]
-    for i, s in enumerate(saved_box, 1):
-        n = len(s) if s and not (len(s) == 1 and np.isnan(s[0])) else 0
-        ax_saved.annotate(f"n={n}", xy=(i, top2), xytext=(0, -4), textcoords="offset points",
+    for i, alg in enumerate(algs_present, 1):
+        na = na_counts.get(alg, 0)
+        label = f"n={len(saved_data[alg])}" + (f" ({na} capped)" if na else "")
+        ax_saved.annotate(label, xy=(i, top2), xytext=(0, -4), textcoords="offset points",
                            ha="center", va="top", fontsize=8, color="gray")
 
     fig.suptitle(f"{benchmark} — Time to Cover & Potential Savings", fontsize=12)
@@ -463,7 +470,7 @@ def main():
         plot_benchmark(benchmark, data, args.budget, save_path, n_violatable=len(violatable))
 
         # Time-based plots: convert % of budget into actual minutes where possible.
-        time_data, saved_data = {}, {}
+        time_data, saved_data, na_counts = {}, {}, {}
         for alg in data:
             bench_dir = results_dir / benchmark / alg / "out"
             elapsed_min_list = load_meta_elapsed_min(bench_dir, alg)
@@ -471,12 +478,13 @@ def main():
             if t2c is not None:
                 time_data[alg] = t2c
                 saved_data[alg] = saved
+                na_counts[alg] = sum(1 for p in data[alg] if p is None)
             elif alg not in avg_override and elapsed_min_list is None:
                 print(f"  [{alg}] No meta_*.csv or --avg_min_override given — "
                       f"skipped from the minutes-based plot.")
 
         time_save_path = (results_dir / f"boxplot_time_{benchmark}.png") if args.save else None
-        plot_benchmark_time(benchmark, time_data, saved_data, time_save_path)
+        plot_benchmark_time(benchmark, time_data, saved_data, na_counts, time_save_path)
 
     if not args.save:
         print("\nShowing plots interactively (use --save to write PNG files).")
