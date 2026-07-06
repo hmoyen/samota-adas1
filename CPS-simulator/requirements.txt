@@ -6,3 +6,4 @@ arviz==0.14.0
 pandas==1.5.3
 pymdptoolbox
 matplotlib==3.6.3
+setuptools<81
