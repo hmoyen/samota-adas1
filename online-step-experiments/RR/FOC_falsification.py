@@ -28,6 +28,11 @@ conf.MAX_SAMPLES = 100
 
 HIGH = 10.0
 
+# Variable names in alphabetical order (matches create_ss_variables sorting)
+RR_VAR_NAMES = sorted(["power", "cruise_speed", "bandwidth", "quality",
+                        "illuminance", "smoke_intensity", "obstacle_size",
+                        "obstacle_distance", "firm_obstacle"])
+
 columns = ["power",
            "cruise_speed",
            "bandwidth",
@@ -94,27 +99,14 @@ class RescueRobotProblem(ElementwiseProblem):
                 self.reqs_min_score[i] = current_min_score[i]
 
     def _evaluate(self, x, out, *args, **kwargs):
+        # Pass variables in alphabetical order to match create_ss_variables()
         if self.sensitivity:
             x = self.get_assignment(x, self.var)
-            _, scores, reqs_satisfied, reqs_min_score, conjunction = helpers.run_mdp_sensitivity([x["power"], 
-                                                            x["cruise_speed"], 
-                                                            x["bandwidth"], 
-                                                            x["quality"], 
-                                                            x["illuminance"],
-                                                            x["smoke_intensity"],
-                                                            x["obstacle_size"],
-                                                            x["obstacle_distance"],
-                                                            x["firm_obstacle"]])
+            _, scores, reqs_satisfied, reqs_min_score, conjunction = helpers.run_mdp_sensitivity(
+                [x[v] for v in RR_VAR_NAMES])
         else:
-            _, scores, reqs_satisfied, conjunction = helpers.run_mdp([x["power"], 
-                                                            x["cruise_speed"], 
-                                                            x["bandwidth"], 
-                                                            x["quality"], 
-                                                            x["illuminance"],
-                                                            x["smoke_intensity"],
-                                                            x["obstacle_size"],
-                                                            x["obstacle_distance"],
-                                                            x["firm_obstacle"]])
+            _, scores, reqs_satisfied, conjunction = helpers.run_mdp(
+                [x[v] for v in RR_VAR_NAMES])
 
         if self.shared_eval_count is not None:
             self.shared_eval_count[0] += 1

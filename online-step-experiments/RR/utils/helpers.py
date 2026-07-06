@@ -38,7 +38,8 @@ def build_random_combinations(expected_maximum):
 
     while len(combinations) < expected_maximum:
         new_combination = list()
-        for key, variable in conf.SS_VARIABLES.items():
+        for key in sorted(conf.SS_VARIABLES.keys()):
+            variable = conf.SS_VARIABLES[key]
             bound = variable['range']
             domain = variable['domain']
             if domain is int:

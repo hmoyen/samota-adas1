@@ -312,10 +312,15 @@ def main(nepisodes, nruns, verbose, logdir, seed):
     score_df = pd.DataFrame(columns=[f'V{j}' for j in range(0, OBJECTIVES)])
     timing_df = pd.DataFrame(columns=[f'R{j}_first_eval' for j in range(0, NREQS)] + ["full_coverage_eval"])
     
-    ss_vars = ["power", "cruise_speed", "bandwidth", 
-               "quality", "illuminance", "smoke_intensity", 
+    ss_vars = ["power", "cruise_speed", "bandwidth",
+               "quality", "illuminance", "smoke_intensity",
                "obstacle_size", "obstacle_distance", "firm_obstacle"]
-    
+
+    # helpers.run_mdp expects values in alphabetically sorted variable order
+    # (matches create_ss_variables), while ss_vars/actions/discretization
+    # above use a fixed insertion order for the RL state/action space.
+    sorted_order_indices = [ss_vars.index(v) for v in sorted(ss_vars)]
+
     disc_step = 2
     discretization = [disc_step, disc_step, disc_step,
                       2, disc_step, 2,
@@ -367,7 +372,8 @@ def main(nepisodes, nruns, verbose, logdir, seed):
             #print(str(new_assignment))
             
             #_, scores, reqs_satisfied, reqs_min_score, conjunction = helpers.run_mdp_sensitivity(new_assignment)
-            _, scores, reqs_satisfied, conjunction = helpers.run_mdp(new_assignment)
+            sorted_assignment = [new_assignment[i] for i in sorted_order_indices]
+            _, scores, reqs_satisfied, conjunction = helpers.run_mdp(sorted_assignment)
 
             #print(str(scores))
 
