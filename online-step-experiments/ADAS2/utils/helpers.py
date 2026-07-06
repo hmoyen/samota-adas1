@@ -33,12 +33,33 @@ def create_ss_variables(ss_variables: dict, input_variables: np.ndarray) -> dict
     return variables_to_exec
 
 
+def clamp_to_bounds(ss_variables: dict, params) -> np.ndarray:
+    """
+    Clamp candidate values to their declared variable bounds, in alphabetically
+    sorted order (matching create_ss_variables).
+
+    Needed because surrogate-generated candidates (SAMOTA GS/LS) bypass pymoo's
+    sampling bounds enforcement, so a value can arrive outside its variable's
+    valid range and crash the simulator on assignment.
+    """
+    var_names = sorted(ss_variables.keys())
+    clamped = np.array(params, dtype=float)
+    for i, var_name in enumerate(var_names):
+        lo, hi = ss_variables[var_name]["range"]
+        if ss_variables[var_name]["domain"] == int:
+            clamped[i] = np.clip(round(clamped[i]), lo, hi)
+        else:
+            clamped[i] = np.clip(clamped[i], lo, hi)
+    return clamped
+
+
 def build_random_combinations(expected_maximum):
     combinations = set()
 
     while len(combinations) < expected_maximum:
         new_combination = list()
-        for key, variable in conf.SS_VARIABLES.items():
+        for key in sorted(conf.SS_VARIABLES.keys()):
+            variable = conf.SS_VARIABLES[key]
             bound = variable['range']
             domain = variable['domain']
             if domain is int:

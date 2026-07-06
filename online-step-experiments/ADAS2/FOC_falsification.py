@@ -35,6 +35,9 @@ columns = ["car_speed",
            "weather",
            "road_shape"] + ['req_{}'.format(i) for i in range(len(conf.CONSTRAINTS))]
 
+# Variable names in alphabetical order (matches create_ss_variables sorting)
+ADAS_VAR_NAMES = sorted(["car_speed", "p_x", "p_y", "orientation", "weather", "road_shape"])
+
 
 
 class AutonomousDrivingProblem(ElementwiseProblem):
@@ -86,21 +89,14 @@ class AutonomousDrivingProblem(ElementwiseProblem):
                 self.reqs_min_score[i] = current_min_score[i]
 
     def _evaluate(self, x, out, *args, **kwargs):
+        # Pass variables in alphabetical order to match create_ss_variables()
         if self.sensitivity:
             x = self.get_assignment(x, self.var)
-            _, scores, reqs_satisfied, reqs_min_score, conjunction = helpers.run_mdp_sensitivity([x["car_speed"], 
-                                                        x["p_x"], 
-                                                        x["p_y"], 
-                                                        x["orientation"], 
-                                                        x["weather"], 
-                                                        x["road_shape"]])
+            _, scores, reqs_satisfied, reqs_min_score, conjunction = helpers.run_mdp_sensitivity(
+                [x[v] for v in ADAS_VAR_NAMES])
         else:
-            _, scores, reqs_satisfied, conjunction = helpers.run_mdp([x["car_speed"], 
-                                                        x["p_x"], 
-                                                        x["p_y"], 
-                                                        x["orientation"], 
-                                                        x["weather"], 
-                                                        x["road_shape"]])
+            _, scores, reqs_satisfied, conjunction = helpers.run_mdp(
+                [x[v] for v in ADAS_VAR_NAMES])
 
         if self.shared_eval_count is not None:
             self.shared_eval_count[0] += 1
