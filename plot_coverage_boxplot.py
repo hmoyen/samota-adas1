@@ -405,6 +405,78 @@ def plot_benchmark_punished(benchmark: str, data: dict, budget: int, save_path: 
     plt.close(fig)
 
 
+def plot_benchmark_time_rate(benchmark: str, data: dict, time_data: dict, save_path: Path = None):
+    """
+    Rate + conditional-time split, mirrors plot_benchmark()'s design but in minutes:
+      - left: % of runs achieving full coverage (same metric as plot_benchmark)
+      - right: wall-clock minutes to cover, among successful runs only (no capping)
+
+    Avoids the distortion in plot_benchmark_time(), where algorithms with a flat
+    --avg_min_override cap (e.g. PF) collapse to an identical capped value while
+    algorithms with real per-run meta_*.csv timing (e.g. SAMOTA) get capped at
+    their own varying elapsed time -- making the two "capped" masses not
+    comparable to each other.
+    """
+    algs_present = [a for a in ALGORITHMS if a in time_data]
+    if not algs_present:
+        return
+
+    fig, (ax_rate, ax_time) = plt.subplots(
+        1, 2, figsize=(max(9, len(algs_present) * 2.2), 5),
+        gridspec_kw={"width_ratios": [1, 1.4]},
+    )
+
+    box_data, rates, n_runs, labels, colors = [], [], [], [], []
+    for alg in algs_present:
+        pcts = data[alg]
+        mins = time_data[alg]
+        achieved_mins = [m for p, m in zip(pcts, mins) if p is not None]
+        box_data.append(achieved_mins if achieved_mins else [float("nan")])
+        rates.append(100.0 * len(achieved_mins) / len(pcts) if pcts else 0.0)
+        n_runs.append(len(pcts))
+        labels.append(ALG_LABELS.get(alg, alg))
+        colors.append(ALG_COLORS.get(alg, "#888888"))
+
+    bars = ax_rate.bar(range(1, len(algs_present) + 1), rates, color=colors, alpha=0.85)
+    for i, (rate, n) in enumerate(zip(rates, n_runs), 1):
+        n_hit = round(rate / 100.0 * n)
+        ax_rate.annotate(f"{n_hit}/{n}", xy=(i, rate), xytext=(0, 3),
+                          textcoords="offset points", ha="center", fontsize=8)
+    ax_rate.set_xticks(range(1, len(algs_present) + 1))
+    ax_rate.set_xticklabels(labels, fontsize=9)
+    ax_rate.set_ylabel("% of runs achieving full coverage", fontsize=10)
+    ax_rate.set_ylim(0, 105)
+    ax_rate.set_title("Coverage rate", fontsize=11)
+    ax_rate.grid(axis="y", alpha=0.3)
+
+    bp = ax_time.boxplot(box_data, patch_artist=True, notch=False,
+                    medianprops=dict(color="black", linewidth=2),
+                    whiskerprops=dict(linewidth=1.2),
+                    capprops=dict(linewidth=1.2),
+                    flierprops=dict(marker="o", markersize=4, alpha=0.5))
+
+    for patch, color in zip(bp["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.75)
+
+    ax_time.set_xticks(range(1, len(algs_present) + 1))
+    ax_time.set_xticklabels(labels, fontsize=9)
+    ax_time.set_ylabel("Minutes to first cover (successful runs only)", fontsize=10)
+    ax_time.set_ylim(bottom=0)
+    ax_time.set_title("Time to cover (conditional on success)", fontsize=11)
+    ax_time.grid(axis="y", alpha=0.3)
+
+    fig.suptitle(f"{benchmark} — Coverage Rate & Wall-Clock Time", fontsize=12)
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  Saved: {save_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_benchmark_time(benchmark: str, time_data: dict, saved_data: dict, na_counts: dict, save_path: Path = None):
     """
     Two panels, minutes-based, all runs:
@@ -543,6 +615,9 @@ def main():
             elif alg not in avg_override and elapsed_min_list is None:
                 print(f"  [{alg}] No meta_*.csv or --avg_min_override given — "
                       f"skipped from the minutes-based plot.")
+
+        time_rate_save_path = (results_dir / f"boxplot_time_rate_{benchmark}.png") if args.save else None
+        plot_benchmark_time_rate(benchmark, data, time_data, time_rate_save_path)
 
         time_save_path = (results_dir / f"boxplot_time_{benchmark}.png") if args.save else None
         plot_benchmark_time(benchmark, time_data, saved_data, na_counts, time_save_path)
