@@ -45,7 +45,8 @@ columns = ["power",
 
 
 class RescueRobotProblem(ElementwiseProblem):
-    def __init__(self, n_objectives, n_reqs, shared_eval_count=None, shared_first_viol=None, **kwargs):
+    def __init__(self, n_objectives, n_reqs, shared_eval_count=None, shared_first_viol=None,
+                 shared_all_X=None, shared_all_reqs=None, **kwargs):
         variables = {
             "power": Integer(bounds=(0, 100)),
             "cruise_speed": Real(bounds=(0, 5)),
@@ -64,6 +65,8 @@ class RescueRobotProblem(ElementwiseProblem):
         self.var = None
         self.shared_eval_count = shared_eval_count  # [int] — mutable counter shared across instances
         self.shared_first_viol = shared_first_viol  # [None|int] per req — shared across instances
+        self.shared_all_X = shared_all_X  # list — mutable, shared across instances
+        self.shared_all_reqs = shared_all_reqs  # list — mutable, shared across instances
         self.reset_random_assignment()
         self.reqs_min_score = [1] * len(conf.CONSTRAINTS)
         super().__init__(vars=variables, n_obj=n_objectives, **kwargs)
@@ -100,13 +103,17 @@ class RescueRobotProblem(ElementwiseProblem):
 
     def _evaluate(self, x, out, *args, **kwargs):
         # Pass variables in alphabetical order to match create_ss_variables()
+        params = [x[v] for v in RR_VAR_NAMES]
         if self.sensitivity:
             x = self.get_assignment(x, self.var)
-            _, scores, reqs_satisfied, reqs_min_score, conjunction = helpers.run_mdp_sensitivity(
-                [x[v] for v in RR_VAR_NAMES])
+            params = [x[v] for v in RR_VAR_NAMES]
+            _, scores, reqs_satisfied, reqs_min_score, conjunction = helpers.run_mdp_sensitivity(params)
         else:
-            _, scores, reqs_satisfied, conjunction = helpers.run_mdp(
-                [x[v] for v in RR_VAR_NAMES])
+            _, scores, reqs_satisfied, conjunction = helpers.run_mdp(params)
+
+        if self.shared_all_X is not None:
+            self.shared_all_X.append(params)
+            self.shared_all_reqs.append(reqs_satisfied)
 
         if self.shared_eval_count is not None:
             self.shared_eval_count[0] += 1
@@ -159,9 +166,13 @@ def main(size, totbudget, nruns, verbose, logdir, seed):
 
         shared_eval_count = [0]
         shared_first_viol = [None] * NREQS
+        shared_all_X = []
+        shared_all_reqs = []
         problem = RescueRobotProblem(n_objectives=OBJECTIVES, n_reqs=NREQS,
                                      shared_eval_count=shared_eval_count,
-                                     shared_first_viol=shared_first_viol)
+                                     shared_first_viol=shared_first_viol,
+                                     shared_all_X=shared_all_X,
+                                     shared_all_reqs=shared_all_reqs)
         ref_dirs = get_reference_directions("das-dennis", 5, n_partitions=2)
 
         sensitivity_budget = BUDGET // 3
@@ -210,7 +221,9 @@ def main(size, totbudget, nruns, verbose, logdir, seed):
                             eliminate_duplicates=MixedVariableDuplicateElimination())
             problem = RescueRobotProblem(n_objectives=OBJECTIVES, n_reqs=NREQS,
                                          shared_eval_count=shared_eval_count,
-                                         shared_first_viol=shared_first_viol)
+                                         shared_first_viol=shared_first_viol,
+                                         shared_all_X=shared_all_X,
+                                         shared_all_reqs=shared_all_reqs)
             res = minimize(problem,
                             algorithm,
                             ('n_gen', focused_test_run_budget_iterations),
@@ -228,6 +241,13 @@ def main(size, totbudget, nruns, verbose, logdir, seed):
         score_df.loc[run] = min_scores_total
         full_coverage_eval = max(shared_first_viol) if all(v is not None for v in shared_first_viol) else None
         timing_df.loc[run] = shared_first_viol + [full_coverage_eval]
+
+        if LOGDIR is not None:
+            var_names_save = sorted(conf.SS_VARIABLES.keys())
+            X_df = pd.DataFrame(shared_all_X, columns=var_names_save)
+            X_df.to_csv(f'{LOGDIR}/X_all_evaluations_FOC_{run}.csv', index=False)
+            reqs_df = pd.DataFrame(shared_all_reqs, columns=[f'R{j}' for j in range(NREQS)])
+            reqs_df.to_csv(f'{LOGDIR}/Reqs_all_evaluations_FOC_{run}.csv', index=False)
 
     if LOGDIR is not None:
         uns_reqs_df.to_csv(f'{LOGDIR}/reqs_FOC_{RUNS}.csv', index=False)

@@ -670,6 +670,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
     database_X = []  # Parameters
     database_F = []  # Fitness values (RAW simulator outputs - larger range!)
     database_processed = []  # Processed scores (for tracking violations)
+    database_reqs_satisfied = []  # Per-eval requirement satisfaction (for diversity analysis)
 
     # Track violations per requirement (like PFES baseline: R0, R1, R2)
     unsatisfied_reqs = [0] * len(conf.CONSTRAINTS)  # [R0, R1, R2]
@@ -712,6 +713,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         database_X.append(x_array)
         database_F.append(raw_estimates)  # ← Constraint-mapped fitness (processed_scores)
         database_processed.append(processed_scores)  # ← Processed scores (for tracking violations)
+        database_reqs_satisfied.append(list(reqs_satisfied))
 
         # Track violations per requirement
         for req_idx, req_satisfied in enumerate(reqs_satisfied):
@@ -836,6 +838,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
             database_X.append(x_array)
             database_F.append(raw_estimates)  # ← Constraint-mapped fitness (processed_scores)
             database_processed.append(processed_scores)  # ← Track processed scores for violations
+            database_reqs_satisfied.append(list(reqs_satisfied))
 
             # Track violations per requirement
             for req_idx, req_satisfied in enumerate(reqs_satisfied):
@@ -899,6 +902,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
             database_X.append(x_array)
             database_F.append(raw_estimates)  # ← Constraint-mapped fitness (processed_scores)
             database_processed.append(processed_scores)  # ← Track processed scores for violations
+            database_reqs_satisfied.append(list(reqs_satisfied))
 
             # Track violations per requirement
             for req_idx, req_satisfied in enumerate(reqs_satisfied):
@@ -1022,6 +1026,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         'objectives_covered': int(objectives_covered),
         'min_scores': [float(x) for x in min_scores.tolist()],
         'efficiency': float(violations / eval_count),
+        'database_X': database_X,
+        'database_reqs_satisfied': database_reqs_satisfied,
     }
 
 
@@ -1070,6 +1076,13 @@ if __name__ == "__main__":
         fvs = results['first_viol_step']
         full_coverage_eval = max(fvs) if all(v is not None for v in fvs) else None
         timing_df.loc[run] = fvs + [full_coverage_eval]
+
+        os.makedirs(args.logdir, exist_ok=True)
+        var_names_save = sorted(conf.SS_VARIABLES.keys())
+        X_df = pd.DataFrame(results['database_X'], columns=var_names_save)
+        X_df.to_csv(f'{args.logdir}/X_all_evaluations_SAMOTA_{run}.csv', index=False)
+        reqs_df = pd.DataFrame(results['database_reqs_satisfied'], columns=[f'R{j}' for j in range(NREQS)])
+        reqs_df.to_csv(f'{args.logdir}/Reqs_all_evaluations_SAMOTA_{run}.csv', index=False)
 
     os.makedirs(args.logdir, exist_ok=True)
     uns_reqs_df.to_csv(f'{args.logdir}/reqs_SAMOTA_{args.nruns}.csv', index=False)

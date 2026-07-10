@@ -293,6 +293,8 @@ def main(nepisodes, nruns, verbose, logdir, seed):
         unsatisfied_reqs = [0] * NREQS
         unsatisfied_conjunction = 0
         first_viol_step = [None] * NREQS
+        all_X = []
+        all_reqs = []
 
         start_time = time.time()
 
@@ -320,6 +322,8 @@ def main(nepisodes, nruns, verbose, logdir, seed):
             #_, scores, reqs_satisfied, reqs_min_score, conjunction = helpers.run_mdp_sensitivity(new_assignment)
             sorted_assignment = [new_assignment[i] for i in sorted_order_indices]
             _, scores, reqs_satisfied, conjunction = helpers.run_mdp(sorted_assignment)
+            all_X.append(sorted_assignment)
+            all_reqs.append(reqs_satisfied)
 
             #print(str(scores))
 
@@ -361,6 +365,11 @@ def main(nepisodes, nruns, verbose, logdir, seed):
             uns_reqs_df.to_csv(f'{LOGDIR}/reqs_MORLOT_{RUNS}.csv', index=False)
             score_df.to_csv(f'{LOGDIR}/score_MORLOT_{RUNS}.csv', index=False)
             timing_df.to_csv(f'{LOGDIR}/timing_MORLOT_{RUNS}.csv', index=False)
+
+            X_df = pd.DataFrame(all_X, columns=sorted(ss_vars))
+            X_df.to_csv(f'{LOGDIR}/X_all_evaluations_MORLOT_{run}.csv', index=False)
+            reqs_df = pd.DataFrame(all_reqs, columns=[f'R{j}' for j in range(NREQS)])
+            reqs_df.to_csv(f'{LOGDIR}/Reqs_all_evaluations_MORLOT_{run}.csv', index=False)
 
 if __name__ == "__main__":
     main()
