@@ -49,7 +49,10 @@ class Model:
         try:
             self.rbf_model = ScipyRbf(*X_T, self.y_train, function='multiquadric', epsilon=1.0)
         except Exception as e:
-            # Fallback to thin-plate if multiquadric fails
+            # Fallback to thin-plate if multiquadric fails (e.g. singular matrix
+            # from collinear/duplicate points)
+            print(f"RBF multiquadric training failed ({type(e).__name__}: {e}), "
+                  f"falling back to thin_plate")
             self.rbf_model = ScipyRbf(*X_T, self.y_train, function='thin_plate')
 
     def predict(self, X):
