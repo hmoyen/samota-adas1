@@ -665,6 +665,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
     logger.info(f"Constraints: {len(conf.CONSTRAINTS)}")
     logger.info(f"MINIMAL_CONSTRAINTS objectives: {len(conf.MINIMAL_CONSTRAINTS)}")
 
+    np.random.seed(seed)
     start_time = time.time()
     archive = []  # Test cases that violate at least one requirement
     database = []  # All evaluated test cases
