@@ -136,7 +136,13 @@ def log_results(n_run, unsatisfied_reqs, unsatisfied_conjunction, best_scores, d
 @click.option('--verbose', default=False, help='Verbose.', type=bool)
 @click.option('--logdir', default="out", help='Log directory.', type=str)
 @click.option('--seed', default=1, help='Base random seed (each run uses seed+run_index).', type=int)
-def main(size, totbudget, nruns, verbose, logdir, seed):
+@click.option('--equalize_budget', default=False,
+              help="Truncate the focused-testing budget so sensitivity + focused evals "
+                   "sum to ~totbudget, matching the fixed budget every other algorithm "
+                   "uses. Default (False) preserves existing behavior, where the "
+                   "sensitivity phase's evals are spent on top of a full totbudget for "
+                   "focused testing.", type=bool)
+def main(size, totbudget, nruns, verbose, logdir, seed, equalize_budget):
     BASE_SEED = seed
     RUNS = nruns
     SIZE = size
@@ -171,8 +177,6 @@ def main(size, totbudget, nruns, verbose, logdir, seed):
         sensitivity_run_budget = sensitivity_budget // len(conf.SS_VARIABLES)
         sensitivity_run_iterations = max(1, sensitivity_run_budget // SIZE)
         #focused_test_run_budget = focused_test_budget // NREQS
-        focused_test_run_budget = BUDGET // NREQS
-        focused_test_run_budget_iterations = max(1, focused_test_run_budget // SIZE)
 
         start_time = time.time()
         # start sensitivity analysis
@@ -197,6 +201,13 @@ def main(size, totbudget, nruns, verbose, logdir, seed):
                     reqs_min_score[i] = problem.reqs_min_score[i]
 
         # start focused testing
+        if equalize_budget:
+            remaining_budget = max(BUDGET - shared_eval_count[0], NREQS)
+            focused_test_run_budget = remaining_budget // NREQS
+        else:
+            focused_test_run_budget = BUDGET // NREQS
+        focused_test_run_budget_iterations = max(1, focused_test_run_budget // SIZE)
+
         scores = np.array(reqs_min_score)
         unsatisfied_reqs_total = [0] * NREQS
         min_scores_total = [HIGH] * OBJECTIVES
