@@ -294,7 +294,8 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
             X_array,
             F_array[:, obj_idx],
             normalize=True,
-            obj_name=obj_names[obj_idx]
+            obj_name=obj_names[obj_idx],
+            seed=seed + obj_idx * 100
         )
 
         # Single-objective GA for this objective

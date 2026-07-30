@@ -19,7 +19,7 @@ class SAMOTAPerObjectiveEnsemble:
     Uses Goel weighting based on training accuracy.
     """
 
-    def __init__(self, X_train, y_train_single_obj, normalize=True, obj_name="V0"):
+    def __init__(self, X_train, y_train_single_obj, normalize=True, obj_name="V0", seed=42):
         """
         Initialize ensemble for ONE objective.
 
@@ -28,11 +28,13 @@ class SAMOTAPerObjectiveEnsemble:
             y_train_single_obj: Violation scores for ONE objective (N,) - just V0, V1, V2, V3, or V4
             normalize: Normalize inputs and outputs
             obj_name: Name of objective (e.g., "V0") for tracking
+            seed: Random state for the GP surrogate, derived from the run's seed
         """
         self.X_train = X_train
         self.y_train = y_train_single_obj
         self.normalize = normalize
         self.obj_name = obj_name
+        self.seed = seed
 
         # Scalers
         self.X_scaler = StandardScaler()
@@ -50,7 +52,7 @@ class SAMOTAPerObjectiveEnsemble:
             alpha=1e-6,
             normalize_y=False,
             n_restarts_optimizer=5,
-            random_state=42
+            random_state=seed
         )
         self.gp.fit(X_train_norm, y_train_norm)
 
@@ -157,7 +159,7 @@ class SAMOTAPerObjectiveEnsemble:
         y_combined = np.concatenate([self.y_train, y_new])
 
         # Retrain (reinitialize)
-        self.__init__(X_combined, y_combined, self.normalize, self.obj_name)
+        self.__init__(X_combined, y_combined, self.normalize, self.obj_name, self.seed)
 
 
 class SAMOTAGlobalSurrogates:
@@ -168,7 +170,7 @@ class SAMOTAGlobalSurrogates:
     ENHANCED: Supports training ONLY uncovered objectives for efficiency.
     """
 
-    def __init__(self, X_train, F_train, normalize=True, objective_indices=None):
+    def __init__(self, X_train, F_train, normalize=True, objective_indices=None, seed=42):
         """
         Initialize surrogates for specified objectives (or all if None).
 
@@ -178,10 +180,12 @@ class SAMOTAGlobalSurrogates:
             normalize: Normalize each objective independently
             objective_indices: List of objective indices to train (e.g., [2,3,4])
                              If None, trains all 5 objectives
+            seed: Random state for each objective's GP surrogate, derived from the run's seed
         """
         self.X_train = X_train
         self.F_train = F_train
         self.normalize = normalize
+        self.seed = seed
         self.all_obj_names = ["V0", "V1", "V2", "V3", "V4"]
 
         # ENHANCED: Only train specified objectives
@@ -199,7 +203,8 @@ class SAMOTAGlobalSurrogates:
                 X_train,
                 F_train[:, obj_idx],
                 normalize=normalize,
-                obj_name=obj_name
+                obj_name=obj_name,
+                seed=seed + obj_idx
             )
 
     def predict_all(self, X):
