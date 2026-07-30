@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            numpy==1.26.4 \
+            scipy==1.10.1 \
+            pandas==1.5.3 \
+            arviz==0.14.0 \
+            pymoo==0.6.1.6 \
+            scikit-learn==1.9.0 \
+            hdbscan==0.8.44 \
+            click==8.1.6 \
+            colorama==0.4.6 \
+            termcolor==2.5.0 \
+            pymdptoolbox==4.0b3 \
+            reportlab==4.5.1 \
+            matplotlib==3.10.9 \
+            pytest==7.4.4
+
+      - name: Install mdp_simulator
+        run: pip install CPS-simulator/dist/mdp_simulator-0.1.9-py3-none-any.whl
+
+      # --run-slow spawns real (short) simulator runs and is intentionally
+      # left off here; see tests/test_smoke_runs.py.
+      - name: Run test suite
+        run: python -m pytest tests/ -q
