@@ -146,6 +146,10 @@ def compute_metrics(reqs_df: pd.DataFrame, score_df: pd.DataFrame, benchmark: st
     # Per-run requirement coverage: fraction of reqs violated >= 1 time
     coverage_per_run = (reqs_df[req_cols] > 0).sum(axis=1).values / n_reqs
 
+    # Binary full-coverage indicator: 1 if every requirement was violated at least
+    # once in that run, 0 otherwise.
+    full_coverage_per_run = (reqs_df[req_cols] > 0).all(axis=1).values.astype(int)
+
     # Score metrics (lower = closer to/past violation boundary)
     score_cols = [c for c in score_df.columns if c.startswith("V")]
     best_score_per_run = score_df[score_cols].min(axis=1).values  # min over objectives
@@ -164,6 +168,9 @@ def compute_metrics(reqs_df: pd.DataFrame, score_df: pd.DataFrame, benchmark: st
         # Coverage
         "coverage_per_run": coverage_per_run,
         "mean_coverage": float(np.mean(coverage_per_run)),
+        # Binary full coverage (all requirements violated within the same run)
+        "full_coverage_per_run": full_coverage_per_run,
+        "full_coverage_rate": float(np.mean(full_coverage_per_run)),
         # Best score (min fitness, lower is better)
         "best_score_per_run": best_score_per_run,
         "mean_best_score": float(np.mean(best_score_per_run)),
@@ -236,9 +243,14 @@ def effect_size_label(a_ab: float) -> str:
         return "large"
 
 
-def run_statistical_tests(all_metrics: dict, reference_algo: str = "SAMOTA"):
+def run_statistical_tests(all_metrics: dict, reference_algo: str = "SAMOTA",
+                          metric_key: str = "total_viol_per_run"):
     """
-    For each benchmark, compare reference_algo against each other algorithm.
+    For each benchmark, compare reference_algo against each other algorithm on the
+    given per-run metric (default: total_viol_per_run, matching the original
+    violation-count-only behavior). Pass metric_key="coverage_per_run" or
+    metric_key="full_coverage_per_run" to run the identical MW/A_AB pipeline on
+    coverage instead.
     Returns nested dict: {benchmark: {algo: {stat results}}}
     """
     results = {}
@@ -248,15 +260,15 @@ def run_statistical_tests(all_metrics: dict, reference_algo: str = "SAMOTA"):
         if ref_metrics is None:
             continue
 
-        ref_viol = ref_metrics["total_viol_per_run"]
+        ref_vals = ref_metrics[metric_key]
 
         for algo, metrics in bench_data.items():
             if algo == reference_algo:
                 continue
-            other_viol = metrics["total_viol_per_run"]
+            other_vals = metrics[metric_key]
 
-            stat, p = mann_whitney_test(ref_viol, other_viol)
-            a_ab = vargha_delaney(ref_viol, other_viol)
+            stat, p = mann_whitney_test(ref_vals, other_vals)
+            a_ab = vargha_delaney(ref_vals, other_vals)
 
             results[benchmark][algo] = {
                 "mw_stat": stat,
@@ -264,9 +276,134 @@ def run_statistical_tests(all_metrics: dict, reference_algo: str = "SAMOTA"):
                 "significant": p < 0.05 if not np.isnan(p) else False,
                 "a_ab": a_ab,
                 "effect": effect_size_label(a_ab),
-                "direction": "SAMOTA better" if a_ab > 0.5 else ("equal" if abs(a_ab - 0.5) < 0.06 else "baseline better"),
+                "direction": f"{reference_algo} better" if a_ab > 0.5 else ("equal" if abs(a_ab - 0.5) < 0.06 else "baseline better"),
             }
     return results
+
+
+def kruskal_wallis_test(all_metrics: dict, benchmark: str, metric_key: str = "total_viol_per_run"):
+    """
+    Omnibus Kruskal-Wallis H-test across all algorithms with data for one benchmark,
+    on the given per-run metric. Meant to be reported before the pairwise
+    reference-vs-X comparisons, to justify running pairwise tests at all.
+    Returns (stat, p_value, algos_included).
+    """
+    bench_data = all_metrics.get(benchmark, {})
+    groups, algos_included = [], []
+    for algo in ALGORITHM_ORDER:
+        metrics = bench_data.get(algo)
+        if metrics is None:
+            continue
+        vals = metrics.get(metric_key)
+        if vals is None or len(vals) < 2:
+            continue
+        groups.append(vals)
+        algos_included.append(algo)
+
+    if len(groups) < 2:
+        return float("nan"), float("nan"), algos_included, "too_few_algorithms"
+    try:
+        stat, p = stats.kruskal(*groups)
+        return float(stat), float(p), algos_included, None
+    except ValueError as e:
+        # e.g. "All numbers are identical in kruskal" — every algorithm scored
+        # identically (no variance), which is a real result, not missing data.
+        return float("nan"), float("nan"), algos_included, str(e)
+
+
+def holm_bonferroni_correction(p_values: list) -> list:
+    """
+    Holm-Bonferroni step-down correction for a family of p-values. Returns corrected
+    p-values in the same order as the input list. NaN entries (e.g. a comparison with
+    too few runs) are passed through as NaN and excluded from the family size m used
+    for correction.
+    """
+    n = len(p_values)
+    valid = [(i, p) for i, p in enumerate(p_values) if not np.isnan(p)]
+    valid.sort(key=lambda t: t[1])
+    m = len(valid)
+
+    corrected = [float("nan")] * n
+    running_max = 0.0
+    for rank, (orig_idx, p) in enumerate(valid):
+        adj = (m - rank) * p
+        running_max = max(running_max, adj)
+        corrected[orig_idx] = min(running_max, 1.0)
+    return corrected
+
+
+def bootstrap_ci(values: np.ndarray, statistic=np.mean, n_resamples: int = 10000,
+                  ci: float = 0.95, seed: int = 0):
+    """Percentile bootstrap CI for a summary statistic of a single sample."""
+    values = np.asarray(values, dtype=float)
+    n = len(values)
+    if n == 0:
+        return (float("nan"), float("nan"))
+    rng = np.random.default_rng(seed)
+    boot_stats = np.empty(n_resamples)
+    for i in range(n_resamples):
+        boot_stats[i] = statistic(rng.choice(values, size=n, replace=True))
+    alpha = (1 - ci) / 2
+    lo = float(np.percentile(boot_stats, alpha * 100))
+    hi = float(np.percentile(boot_stats, (1 - alpha) * 100))
+    return (lo, hi)
+
+
+def bootstrap_ci_a12(a: np.ndarray, b: np.ndarray, n_resamples: int = 10000,
+                      ci: float = 0.95, seed: int = 0):
+    """
+    Percentile bootstrap CI for the Vargha-Delaney A_12 effect size, resampling both
+    groups independently each iteration. Reuses vargha_delaney() itself for every
+    resample (not a reimplementation), so the CI is always consistent with whatever
+    point estimate is reported alongside it.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    m, n = len(a), len(b)
+    if m == 0 or n == 0:
+        return (float("nan"), float("nan"))
+    rng = np.random.default_rng(seed)
+    boot_vals = np.empty(n_resamples)
+    for i in range(n_resamples):
+        a_s = rng.choice(a, size=m, replace=True)
+        b_s = rng.choice(b, size=n, replace=True)
+        boot_vals[i] = vargha_delaney(a_s, b_s)
+    alpha = (1 - ci) / 2
+    lo = float(np.percentile(boot_vals, alpha * 100))
+    hi = float(np.percentile(boot_vals, (1 - alpha) * 100))
+    return (lo, hi)
+
+
+def enrich_with_corrections_and_cis(stat_tests: dict, all_metrics: dict, metric_key: str,
+                                     reference_algo: str, n_resamples: int = 10000,
+                                     seed: int = 0):
+    """
+    In place: adds Holm-Bonferroni corrected p-values (p_value_holm,
+    significant_holm) and bootstrap 95% CIs (ref_mean_ci, ref_median_ci,
+    other_mean_ci, other_median_ci, a_ab_ci) to the output of run_statistical_tests().
+    Raw p_value/a_ab fields are left untouched. Correction is applied within each
+    benchmark's family of reference_algo-vs-X comparisons for this metric.
+    """
+    for benchmark, bench_stats in stat_tests.items():
+        algos = list(bench_stats.keys())
+        if not algos:
+            continue
+        raw_p = [bench_stats[a]["p_value"] for a in algos]
+        corrected_p = holm_bonferroni_correction(raw_p)
+
+        ref_vals = all_metrics[benchmark][reference_algo][metric_key]
+        for algo, p_holm in zip(algos, corrected_p):
+            ts = bench_stats[algo]
+            ts["p_value_holm"] = p_holm
+            ts["significant_holm"] = (p_holm < 0.05) if not np.isnan(p_holm) else False
+
+            other_vals = all_metrics[benchmark][algo][metric_key]
+            ts["ref_mean_ci"] = bootstrap_ci(ref_vals, np.mean, n_resamples, seed=seed)
+            ts["ref_median_ci"] = bootstrap_ci(ref_vals, np.median, n_resamples, seed=seed)
+            ts["other_mean_ci"] = bootstrap_ci(other_vals, np.mean, n_resamples, seed=seed)
+            ts["other_median_ci"] = bootstrap_ci(other_vals, np.median, n_resamples, seed=seed)
+            ts["a_ab_ci"] = bootstrap_ci_a12(ref_vals, other_vals, n_resamples, seed=seed)
+    return stat_tests
 
 
 # ============================================================================
@@ -358,12 +495,37 @@ def print_per_req_table(all_metrics: dict):
             print(f"  {ALGO_DISPLAY[algo]:{12}} | {vals}")
 
 
-def print_stat_tests_detail(stat_tests: dict):
-    """Print detailed statistical test results."""
+def print_kruskal_wallis_summary(all_metrics: dict, metric_key: str, metric_label: str):
+    """Print the per-benchmark omnibus Kruskal-Wallis result, before pairwise tests."""
+    print(f"\n{'-'*80}")
+    print(f"OMNIBUS: Kruskal-Wallis H-test across all algorithms — {metric_label}")
+    print(f"  (run before the pairwise reference-vs-X comparisons below, to justify")
+    print(f"   doing pairwise tests at all)")
+    print(f"{'-'*80}")
+    for benchmark in BENCHMARKS:
+        stat, p, algos_included, reason = kruskal_wallis_test(all_metrics, benchmark, metric_key)
+        if np.isnan(p):
+            if reason == "too_few_algorithms":
+                print(f"  {benchmark}: insufficient data (< 2 algorithms with results)")
+            else:
+                print(f"  {benchmark}: omnibus test undefined — {len(algos_included)} "
+                      f"algorithms present, but all had identical values ({reason})")
+            continue
+        sig = "YES *" if p < 0.05 else "no"
+        print(f"  {benchmark}: H={stat:.3f}, p={p:.4f} ({sig}), "
+              f"{len(algos_included)} algorithms: {', '.join(algos_included)}")
+
+
+def print_stat_tests_detail(stat_tests: dict, metric_label: str = "Violation Count",
+                            reference_algo: str = "SAMOTA"):
+    """Print detailed statistical test results, including Holm-corrected p-values
+    and bootstrap 95% CIs alongside the raw values (raw values are never overwritten)."""
     print(f"\n{'='*80}")
-    print(f"STATISTICAL TESTS: SAMOTA vs Baselines (Mann-Whitney U, Vargha-Delaney A_AB)")
-    print(f"  * = p < 0.05 (statistically significant)")
-    print(f"  A_AB > 0.5 means SAMOTA finds more violations")
+    print(f"STATISTICAL TESTS: {reference_algo} vs Baselines — {metric_label}")
+    print(f"  (Mann-Whitney U, Vargha-Delaney A_AB, Holm-Bonferroni-corrected p-value,")
+    print(f"   bootstrap 95% CIs on A_AB and on each side's mean)")
+    print(f"  * = p < 0.05 (statistically significant), raw and Holm-corrected shown separately")
+    print(f"  A_AB > 0.5 means {reference_algo} scores higher on this metric")
     print(f"{'='*80}")
 
     for benchmark in BENCHMARKS:
@@ -373,31 +535,52 @@ def print_stat_tests_detail(stat_tests: dict):
             continue
 
         print(f"\n  {benchmark}:")
-        print(f"    {'vs':12} | {'p-value':^10} | {'Significant':^12} | {'A_AB':^6} | {'Effect':^12} | Direction")
-        print("    " + "-" * 75)
+        print(f"    {'vs':12} | {'p-raw':^8} | {'p-holm':^8} | {'Sig(raw)':^9} | {'Sig(holm)':^10} "
+              f"| {'A_AB':^6} | {'A_AB 95% CI':^16} | {'Effect':^10} | Direction")
+        print("    " + "-" * 115)
         for algo in ALGORITHM_ORDER:
-            if algo == "SAMOTA":
+            if algo == reference_algo:
                 continue
             ts = bench_stats.get(algo)
             if ts is None:
-                print(f"    {ALGO_DISPLAY[algo]:12} | {'N/A':^10} | {'N/A':^12} | {'N/A':^6} | {'N/A':^12} | N/A")
+                print(f"    {ALGO_DISPLAY[algo]:12} | {'N/A':^8} | {'N/A':^8} | {'N/A':^9} | {'N/A':^10} "
+                      f"| {'N/A':^6} | {'N/A':^16} | {'N/A':^10} | N/A")
                 continue
-            sig = "YES *" if ts["significant"] else "no"
-            print(f"    {ALGO_DISPLAY[algo]:12} | {ts['p_value']:^10.4f} | {sig:^12} | {ts['a_ab']:^6.3f} | {ts['effect']:^12} | {ts['direction']}")
+            sig_raw = "YES*" if ts["significant"] else "no"
+            p_holm = ts.get("p_value_holm", float("nan"))
+            p_holm_str = f"{p_holm:.4f}" if not np.isnan(p_holm) else "N/A"
+            sig_holm = "YES*" if ts.get("significant_holm") else "no"
+            a_ci = ts.get("a_ab_ci", (float("nan"), float("nan")))
+            a_ci_str = f"[{a_ci[0]:.2f},{a_ci[1]:.2f}]" if not np.isnan(a_ci[0]) else "N/A"
+            print(f"    {ALGO_DISPLAY[algo]:12} | {ts['p_value']:^8.4f} | {p_holm_str:^8} | {sig_raw:^9} "
+                  f"| {sig_holm:^10} | {ts['a_ab']:^6.3f} | {a_ci_str:^16} | {ts['effect']:^10} | {ts['direction']}")
 
 
 # ============================================================================
 # SAVE TABLES
 # ============================================================================
 
-def save_tables(all_metrics: dict, stat_tests: dict, tables_dir: Path, nruns: int):
-    """Save summary tables to CSV files."""
+def save_tables(all_metrics: dict, all_stat_tests: dict, tables_dir: Path, nruns: int,
+                reference_algo: str = "SAMOTA"):
+    """
+    Save summary tables to CSV files.
+
+    all_stat_tests: {metric_key: stat_tests_dict} — one entry per metric tested
+    (total_viol_per_run, coverage_per_run, full_coverage_per_run), each already
+    enriched with Holm-corrected p-values and bootstrap CIs via
+    enrich_with_corrections_and_cis().
+    """
     tables_dir.mkdir(parents=True, exist_ok=True)
+    viol_stats = all_stat_tests.get("total_viol_per_run", {})
+    cov_stats = all_stat_tests.get("coverage_per_run", {})
+    fullcov_stats = all_stat_tests.get("full_coverage_per_run", {})
 
     rows = []
     for benchmark in BENCHMARKS:
         bench_data = all_metrics.get(benchmark, {})
-        bench_stats = stat_tests.get(benchmark, {})
+        bench_viol_stats = viol_stats.get(benchmark, {})
+        bench_cov_stats = cov_stats.get(benchmark, {})
+        bench_fullcov_stats = fullcov_stats.get(benchmark, {})
 
         for algo in ALGORITHM_ORDER:
             metrics = bench_data.get(algo)
@@ -414,6 +597,7 @@ def save_tables(all_metrics: dict, stat_tests: dict, tables_dir: Path, nruns: in
                     "std_violations": round(metrics["std_viol"], 2),
                     "total_violations": metrics["sum_viol"],
                     "mean_coverage_pct": round(metrics["mean_coverage"] * 100, 1),
+                    "full_coverage_rate_pct": round(metrics["full_coverage_rate"] * 100, 1),
                     "mean_best_score": round(metrics["mean_best_score"], 5),
                     "mean_elapsed_min": round(metrics["mean_elapsed_min"], 1) if metrics.get("mean_elapsed_min") else None,
                     "mean_efficiency": round(metrics["mean_efficiency"], 4) if metrics.get("mean_efficiency") else None,
@@ -425,19 +609,32 @@ def save_tables(all_metrics: dict, stat_tests: dict, tables_dir: Path, nruns: in
                 row.update({k: None for k in [
                     "n_runs", "mean_violations", "median_violations",
                     "std_violations", "total_violations",
-                    "mean_coverage_pct", "mean_best_score"
+                    "mean_coverage_pct", "full_coverage_rate_pct", "mean_best_score"
                 ]})
 
-            # Stats vs SAMOTA
-            if algo != "SAMOTA" and algo in bench_stats:
-                ts = bench_stats[algo]
-                row.update({
-                    "mw_p_value": round(ts["p_value"], 4) if not np.isnan(ts["p_value"]) else None,
-                    "significant_vs_samota": ts["significant"],
-                    "a_ab_samota_vs_algo": round(ts["a_ab"], 3),
-                    "effect_size": ts["effect"],
-                    "direction": ts["direction"],
-                })
+            # Stats vs reference_algo — violation count (kept for backward compatibility
+            # with the original column names), plus coverage and full-coverage in
+            # parallel, each clearly prefixed so the three are never confused.
+            def _add_stat_cols(prefix, ts):
+                if ts is None:
+                    return {}
+                a_ci = ts.get("a_ab_ci", (float("nan"), float("nan")))
+                return {
+                    f"{prefix}_mw_p_value_raw": round(ts["p_value"], 4) if not np.isnan(ts["p_value"]) else None,
+                    f"{prefix}_mw_p_value_holm": round(ts["p_value_holm"], 4) if not np.isnan(ts.get("p_value_holm", float("nan"))) else None,
+                    f"{prefix}_significant_raw": ts["significant"],
+                    f"{prefix}_significant_holm": ts.get("significant_holm"),
+                    f"{prefix}_a_ab": round(ts["a_ab"], 3),
+                    f"{prefix}_a_ab_ci_lo": round(a_ci[0], 3) if not np.isnan(a_ci[0]) else None,
+                    f"{prefix}_a_ab_ci_hi": round(a_ci[1], 3) if not np.isnan(a_ci[1]) else None,
+                    f"{prefix}_effect_size": ts["effect"],
+                    f"{prefix}_direction": ts["direction"],
+                }
+
+            if algo != reference_algo:
+                row.update(_add_stat_cols("viol", bench_viol_stats.get(algo)))
+                row.update(_add_stat_cols("coverage", bench_cov_stats.get(algo)))
+                row.update(_add_stat_cols("full_coverage", bench_fullcov_stats.get(algo)))
 
             rows.append(row)
 
@@ -446,25 +643,31 @@ def save_tables(all_metrics: dict, stat_tests: dict, tables_dir: Path, nruns: in
     summary_df.to_csv(summary_path, index=False)
     print(f"\n  Saved: {summary_path}")
 
-    # Save per-benchmark raw violation data
+    # Save per-benchmark raw per-run data, one file per metric
+    per_run_metrics = {
+        "violations": "total_viol_per_run",
+        "coverage": "coverage_per_run",
+        "full_coverage": "full_coverage_per_run",
+    }
     for benchmark in BENCHMARKS:
         bench_data = all_metrics.get(benchmark, {})
-        all_runs = {}
-        for algo in ALGORITHM_ORDER:
-            metrics = bench_data.get(algo)
-            if metrics is not None:
-                all_runs[algo] = metrics["total_viol_per_run"]
+        for file_suffix, metric_key in per_run_metrics.items():
+            all_runs = {}
+            for algo in ALGORITHM_ORDER:
+                metrics = bench_data.get(algo)
+                if metrics is not None:
+                    all_runs[algo] = metrics[metric_key]
 
-        if all_runs:
-            max_len = max(len(v) for v in all_runs.values())
-            runs_dict = {}
-            for algo, vals in all_runs.items():
-                padded = list(vals) + [None] * (max_len - len(vals))
-                runs_dict[algo] = padded
-            runs_df = pd.DataFrame(runs_dict)
-            runs_path = tables_dir / f"{benchmark}_violations_per_run.csv"
-            runs_df.to_csv(runs_path, index=False)
-            print(f"  Saved: {runs_path}")
+            if all_runs:
+                max_len = max(len(v) for v in all_runs.values())
+                runs_dict = {}
+                for algo, vals in all_runs.items():
+                    padded = list(vals) + [None] * (max_len - len(vals))
+                    runs_dict[algo] = padded
+                runs_df = pd.DataFrame(runs_dict)
+                runs_path = tables_dir / f"{benchmark}_{file_suffix}_per_run.csv"
+                runs_df.to_csv(runs_path, index=False)
+                print(f"  Saved: {runs_path}")
 
 
 # ============================================================================
@@ -486,6 +689,10 @@ def main():
     parser.add_argument("--reference", type=str, default="SAMOTA",
                         choices=ALGORITHM_ORDER,
                         help="Reference algorithm for statistical tests (default: SAMOTA)")
+    parser.add_argument("--bootstrap_resamples", type=int, default=10000,
+                        help="Number of bootstrap resamples for CIs (default: 10000)")
+    parser.add_argument("--bootstrap_seed", type=int, default=0,
+                        help="RNG seed for bootstrap resampling, for reproducible CIs (default: 0)")
     args = parser.parse_args()
 
     results_dir = Path(args.results_dir)
@@ -521,18 +728,41 @@ def main():
         print("\n[ERROR] No result files found. Run experiments first with run_all_experiments.py")
         sys.exit(1)
 
-    # Statistical tests
-    stat_tests = run_statistical_tests(all_metrics, reference_algo=args.reference)
+    # Statistical tests — run the identical MW/Vargha-Delaney pipeline on violation
+    # count (original behavior), requirement coverage, and binary full coverage.
+    # Coverage is the paper's actual headline claim; violation count alone was
+    # previously the only metric tested. Each is enriched with Holm-Bonferroni
+    # correction and bootstrap CIs, without altering the raw values.
+    metrics_to_test = [
+        ("total_viol_per_run", "Violation Count"),
+        ("coverage_per_run", "Requirement Coverage (fraction of reqs ever violated)"),
+        ("full_coverage_per_run", "Full Coverage (binary: all reqs violated in-run)"),
+    ]
+
+    all_stat_tests = {}
+    for metric_key, _ in metrics_to_test:
+        st = run_statistical_tests(all_metrics, reference_algo=args.reference, metric_key=metric_key)
+        enrich_with_corrections_and_cis(
+            st, all_metrics, metric_key, args.reference,
+            n_resamples=args.bootstrap_resamples, seed=args.bootstrap_seed,
+        )
+        all_stat_tests[metric_key] = st
+
+    stat_tests = all_stat_tests["total_viol_per_run"]  # kept for the existing summary table
 
     # Print tables
     print_summary_table(all_metrics, stat_tests, args.nruns)
     print_per_req_table(all_metrics)
-    print_stat_tests_detail(stat_tests)
+
+    for metric_key, metric_label in metrics_to_test:
+        print_kruskal_wallis_summary(all_metrics, metric_key, metric_label)
+        print_stat_tests_detail(all_stat_tests[metric_key], metric_label=metric_label,
+                                reference_algo=args.reference)
 
     # Save tables
     if args.save_tables:
         tables_dir = results_dir / "tables"
-        save_tables(all_metrics, stat_tests, tables_dir, args.nruns)
+        save_tables(all_metrics, all_stat_tests, tables_dir, args.nruns, reference_algo=args.reference)
 
     print(f"\n[Done] Analyzed {found_count} algorithm/benchmark combinations.")
 
