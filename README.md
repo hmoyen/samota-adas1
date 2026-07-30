@@ -1,44 +1,77 @@
 # ICSE 2025 Replication Package: SAMOTA + PFES
 
-**Full SAMOTA Implementation for Autonomous Driving System Testing**
+**SAMOTA implementation and baselines across three benchmark systems**
 
-This is a clean repository containing the complete implementation of the SAMOTA (Surrogate-Assisted Many-Objective Test case generation Algorithm) approach integrated with PFES for online adaptive test generation on the ADAS1 benchmark system.
+This repository contains the SAMOTA (Surrogate-Assisted Many-Objective Test case generation
+Algorithm) implementation, PFES, and four other falsification baselines, evaluated on three
+benchmark systems: **ADAS1** (autonomous driving, 6D/3 requirements), **ADAS2** (autonomous
+driving, 6D/6 requirements), and **RR** (rescue robot, 9D/6 requirements). Each benchmark
+directory under `online-step-experiments/` is self-contained (own `config.py`,
+`utils/helpers.py`, algorithm implementations).
 
 ## Overview
 
-SAMOTA combines machine learning surrogates with multi-objective optimization to efficiently generate test cases that violate safety constraints with minimal simulator evaluations.
+SAMOTA combines machine learning surrogates with multi-objective optimization to efficiently
+generate test cases that violate safety constraints with minimal simulator evaluations. Six
+algorithms are compared per benchmark: PF (pure NSGA3), RS (random search), FF (focused
+falsification), MERLOT (PFES+RL), SAMOTA, and SAMOTA+SW (sliding window).
 
 **Key Features**:
-- ✅ Full SAMOTA algorithm (Phase 1 ART + Phase 2 GS+LS)
-- ✅ PFES baseline for comparison
-- ✅ Comparative stats framework (CSV + statistical analysis)
-- ✅ Poetry dependency management
-- ✅ 5 optimization objectives (from 3 constraints: S0.a has 2 bounds + S2.b has 3 bounds)
+- Full SAMOTA algorithm (Phase 1 ART + Phase 2 GS+LS) plus five baselines
+- Three benchmark systems (ADAS1, ADAS2, RR)
+- Comparative statistics framework (`analyze_all_results.py`): Mann-Whitney U + Vargha-Delaney
+  A_12 with Holm-Bonferroni correction, bootstrap CIs, and Kruskal-Wallis omnibus tests
+- Poetry or pip-based dependency management
+- `pytest` test suite (`tests/`), run in CI on every push/PR
 
 ## Quick Start
 
-### 1. Install Poetry
+### 1. Install Python 3.11
+
+The pinned dependency versions (below) require Python 3.11 specifically — arviz 0.14.0 and
+its compatible numpy/scipy/pandas versions are not available for newer Python releases.
+
+### 2. Install Dependencies
+
+Either via Poetry:
 
 ```bash
 curl -sSL https://install.python-poetry.org | python3 -
 export PATH="$HOME/.local/bin:$PATH"
-```
-
-### 2. Install Dependencies
-
-```bash
+poetry env use python3.11
 poetry install
+poetry shell
 ```
 
-### 3. Run Comparative Experiments
+or directly with pip (matches the versions pinned in CI, `.github/workflows/tests.yml`):
 
 ```bash
-poetry shell
-cd online-step-experiments/ADAS1
-python run_comparative_experiments.py --runs 5 --budget 900 --output results
+python3.11 -m pip install \
+    numpy==1.26.4 scipy==1.10.1 pandas==1.5.3 arviz==0.14.0 pymoo==0.6.1.6 \
+    scikit-learn==1.9.0 hdbscan==0.8.44 click==8.1.6 colorama==0.4.6 \
+    termcolor==2.5.0 pymdptoolbox==4.0b3 reportlab==4.5.1 matplotlib==3.10.9 pytest==7.4.4
 ```
 
-### 4. Check Results
+Then install the bundled simulator wheel:
+
+```bash
+python3.11 -m pip install CPS-simulator/dist/mdp_simulator-0.1.9-py3-none-any.whl
+```
+
+### 3. Run the test suite
+
+```bash
+python3.11 -m pytest tests/ -q
+```
+
+### 4. Run comparative experiments
+
+```bash
+cd online-step-experiments/ADAS1   # or ADAS2 / RR
+python3.11 run_comparative_experiments.py --runs 5 --budget 900 --output results
+```
+
+### 5. Check Results
 
 ```
 results/
@@ -48,34 +81,35 @@ results/
 └── efficiency_analysis.txt
 ```
 
-**See [QUICK_START.md](QUICK_START.md) for detailed instructions.**
-
 ## Repository Structure
 
 ```
-icse2025-samota-adas1/
+clean_repo/
 ├── pyproject.toml                      # Poetry configuration
 ├── README.md                           # This file
-├── QUICK_START.md                      # Poetry setup guide
+├── analyze_all_results.py              # Cross-algorithm statistical analysis (all benchmarks)
+├── tests/                              # pytest suite (subprocess-isolated per benchmark)
+├── .github/workflows/tests.yml         # CI: runs pytest on push/PR
 ├── CPS-simulator/
 │   ├── dist/
 │   │   └── mdp_simulator-0.1.9-py3-none-any.whl
 │   └── README.md
 └── online-step-experiments/
-    └── ADAS1/
+    ├── ADAS1/                          # 6D search space, 3 requirements
+    ├── ADAS2/                          # 6D search space, 6 requirements
+    └── RR/                             # 9D search space, 6 requirements
         ├── PFES_SAMOTA.py              # Main SAMOTA implementation
         ├── PFES_falsification.py       # PFES baseline
+        ├── FOC_falsification.py        # FF baseline
+        ├── PFRL_falsification.py       # MERLOT baseline
         ├── run_comparative_experiments.py   # Stats framework
         ├── config.py                   # Configuration
         ├── SAMOTA_ensemble.py          # Surrogate ensembles
         ├── RBF.py                      # RBF model
-        ├── EXPERIMENT_GUIDE.md         # Results interpretation
-        ├── PFES_SAMOTA_ALGORITHMS_CORRECTED.md  # Formal algorithms
         ├── utils/
         │   ├── helpers.py              # Simulator wrapper
         │   └── constraints_builder.py  # Constraint utilities
-        └── INPUT/
-            └── AutonomousDriving_v1/   # Simulator configuration
+        └── INPUT/                      # Simulator configuration
 ```
 
 ## Algorithms Implemented
@@ -104,11 +138,14 @@ icse2025-samota-adas1/
 - RBF Network (10 neurons)
 - Goel-weighted ensemble
 
-See `online-step-experiments/ADAS1/PFES_SAMOTA_ALGORITHMS_CORRECTED.md` for formal pseudocode.
+See `online-step-experiments/ADAS1/PFES_SAMOTA_ALGORITHMS_CORRECTED.md` for formal pseudocode
+(same algorithm structure applies to ADAS2 and RR, with per-benchmark search spaces and
+requirements).
 
-## Objectives (ADAS1)
+## Objectives (ADAS1 example)
 
-The system has **5 optimization objectives** (not 3):
+ADAS2 and RR have their own objective/requirement definitions in their respective `config.py` —
+see each benchmark's `CONSTRAINTS` for details. ADAS1 has **5 optimization objectives** (not 3):
 
 | Objective | Source | Bounds | Description |
 |-----------|--------|--------|-------------|
@@ -142,89 +179,53 @@ SS_VARIABLES = {
 CONSTRAINTS = [...]
 ```
 
-## Expected Results (900 evaluations)
-
-| Metric | PFES Baseline | PFES+SAMOTA Target |
-|--------|---|---|
-| **Violations (R0/R1/R2)** | 15 / 3 / 3 | 15-18 / 3-5 / 3-5 |
-| **Objectives Covered** | 5/5 | 5/5 |
-| **Min Fitness** | ~0.014-0.022 | ~0.013-0.021 |
-| **Time** | ~50 min | ~60-70 min |
-| **Efficiency** | 0.041 v/e | 0.040-0.045 v/e |
+See `results/<benchmark>/<algorithm>/out/` for actual violation-count and coverage CSVs from
+the 30-run experiments, and run `python3.11 analyze_all_results.py` for the statistical
+comparison across all six algorithms and three benchmarks.
 
 ## Usage Examples
 
-### Run PFES+SAMOTA Only
+### Run PFES+SAMOTA only
 
 ```bash
-poetry shell
-cd online-step-experiments/ADAS1
-python -c "import PFES_SAMOTA; PFES_SAMOTA.run_pfes_samota(budget=900, max_iterations=30)"
+cd online-step-experiments/ADAS1   # or ADAS2 / RR
+python3.11 -c "import PFES_SAMOTA; PFES_SAMOTA.run_pfes_samota(budget=900, max_iterations=30)"
 ```
 
-### Run PFES Baseline Only
+### Run PFES baseline only
 
 ```bash
-poetry shell
 cd online-step-experiments/ADAS1
-python -c "import PFES_falsification; PFES_falsification.run_pfes(max_evaluations=900)"
+python3.11 -c "import PFES_falsification; PFES_falsification.run_pfes(max_evaluations=900)"
 ```
 
-### Run Multiple Parallel Experiments
+### Run all six algorithms for comparison
 
 ```bash
-poetry shell
 cd online-step-experiments/ADAS1
-python run_comparative_experiments.py --runs 5 --budget 900 --output results_comparison
+python3.11 run_comparative_experiments.py --runs 30 --budget 900 --output results_comparison
 ```
 
 ## Troubleshooting
 
-### Python Version Error
-```bash
-poetry env use python3.11
-poetry install
-```
+### Python version error
+Make sure you're using `python3.11` specifically (see "Install Python 3.11" above), not
+whatever `python`/`python3` resolves to by default.
 
-### mdp_simulator Not Found
+### mdp_simulator not found
 ```bash
-poetry run pip install CPS-simulator/dist/mdp_simulator-0.1.9-py3-none-any.whl
+python3.11 -m pip install CPS-simulator/dist/mdp_simulator-0.1.9-py3-none-any.whl
 ```
-
-### Clear Cache and Reinstall
-```bash
-poetry env remove
-poetry install --no-cache
-```
-
-See [QUICK_START.md](QUICK_START.md) for more details.
+(prefix with `poetry run` if using Poetry)
 
 ## Documentation
 
-- **QUICK_START.md** — Poetry setup and basic commands
 - **online-step-experiments/ADAS1/EXPERIMENT_GUIDE.md** — Results interpretation
 - **online-step-experiments/ADAS1/PFES_SAMOTA_ALGORITHMS_CORRECTED.md** — Formal algorithms
 
 ## Project Information
 
 - **Author**: Helena Moyen
-- **Date**: June 2026
 - **Framework**: ICSE 2025 Replication Package
 - **License**: MIT
-- **Dependencies**: Managed via Poetry
-
-## Original Package Structure
-
-This clean repository focuses on the SAMOTA+ADAS1 experiments. The original package included:
-
-- `CPS-simulator`: Python simulator for autonomous driving system
-- `online-step-experiments/ADAS1/ADAS2/RR/UAV`: Experiments for 4 benchmarks
-- `offline-step-experiments`: MDP verification (PRISM)
-
-This version contains only ADAS1 with the full SAMOTA implementation.
-
----
-
-**Ready to run on your VM!** 🚀
-
-For setup instructions, see [QUICK_START.md](QUICK_START.md).
+- **Dependencies**: Managed via Poetry, or pip with the pinned versions above
