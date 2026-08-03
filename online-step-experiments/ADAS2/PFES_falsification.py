@@ -114,13 +114,17 @@ def main(size, niterations, nruns, optalg, verbose, logdir, seed):
             
             start_time = time.time()
             
-            combinations = helpers.build_random_combinations(SIZE * ITERATIONS)
+            combinations = list(helpers.build_random_combinations(SIZE * ITERATIONS))
             pool = mp.Pool(processes=THREADS_COUNT)
-            results = pool.map(helpers.run_mdp, list(combinations))
+            results = pool.map(helpers.run_mdp, combinations)
             pool.close()
             pool.join()
 
-            for _, scores, reqs_satisfied, conjunction in results:
+            all_X, all_F, all_reqs = [], [], []
+            for x, (_, scores, reqs_satisfied, conjunction) in zip(combinations, results):
+                all_X.append(list(x))
+                all_F.append(scores)
+                all_reqs.append(reqs_satisfied)
                 for i in range(0, len(min_scores)):
                     if scores[i] < min_scores[i]:
                         min_scores[i] = scores[i]
@@ -128,10 +132,21 @@ def main(size, niterations, nruns, optalg, verbose, logdir, seed):
                     if not reqs_satisfied[i]:
                         unsatisfied_reqs[i] +=1
                 unsatisfied_conjunction += conjunction
-            
+
             log_results(run, unsatisfied_reqs, unsatisfied_conjunction, min_scores, time.time() - start_time)
             uns_reqs_df.loc[run] = unsatisfied_reqs + [unsatisfied_conjunction]
             score_df.loc[run] = min_scores
+
+            # Save all evaluations, same format/naming as the else branch below
+            if LOGDIR is not None:
+                X_df = pd.DataFrame(all_X, columns=sorted(conf.SS_VARIABLES.keys()))
+                X_df.to_csv(f'{LOGDIR}/X_all_evaluations_{OPTALG}_{run}.csv', index=False)
+
+                F_df = pd.DataFrame(all_F, columns=[f'V{i}' for i in range(OBJECTIVES)])
+                F_df.to_csv(f'{LOGDIR}/F_all_evaluations_{OPTALG}_{run}.csv', index=False)
+
+                reqs_df = pd.DataFrame(all_reqs, columns=[f'R{i}' for i in range(NREQS)])
+                reqs_df.to_csv(f'{LOGDIR}/Reqs_all_evaluations_{OPTALG}_{run}.csv', index=False)
         else:
             problem = AutonomousDrivingProblem(n_objectives=OBJECTIVES, n_reqs=NREQS)
             ref_dirs = get_reference_directions("das-dennis", OBJECTIVES, n_partitions=2)
