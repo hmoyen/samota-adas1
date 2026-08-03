@@ -266,7 +266,8 @@ class GSMultiObjectivePerObjectiveSurrogateProblem(ElementwiseProblem):
         out["F"] = np.array(F)
 
 
-def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=50, top_k=1, seed=0):
+def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=50, top_k=1, seed=0,
+                        use_population_selection=False):
     """
     Phase 2a: Global Search - PER-OBJECTIVE surrogate + single-objective GA.
 
@@ -280,6 +281,15 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
 
     Paper reference: Algorithm 3, line 12: return T_b ∪ T_n
     where T_b = 1 best per objective, T_n = 1 most uncertain per objective.
+
+    NOTE: for a single-objective problem, pymoo's res.X/res.opt only ever contains
+    the single winning individual (see pymoo.util.optimum.filter_optimum), not the
+    GA's final population. So by default ("best" and "most uncertain" are picked from
+    that same 1-element list) this always collapses to the same point and the
+    uncertainty-based exploration half never actually contributes anything different
+    from pure exploitation. Set use_population_selection=True to instead select from
+    the GA's real final population (pop_size individuals) so exploitation and
+    exploration can diverge.
     """
     if len(uncovered_objectives) == 0:
         return []
@@ -310,18 +320,23 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
         )
 
         res = minimize(problem, algorithm, ('n_gen', n_gen),
-                       seed=seed + obj_idx * 100, save_history=False, verbose=False)
+                       seed=seed + obj_idx * 100, save_history=use_population_selection, verbose=False)
 
-        if res.X is None:
-            continue
-
-        # Handle dict (single solution), 1D array, or 2D array/list (population)
-        if isinstance(res.X, dict):
-            pop_X = [res.X]  # Single dict solution
-        elif isinstance(res.X, np.ndarray) and res.X.ndim == 1:
-            pop_X = [res.X]  # Single 1D array solution
+        if use_population_selection:
+            if not res.history:
+                continue
+            pop_X = list(res.history[-1].pop.get("X"))
         else:
-            pop_X = res.X if isinstance(res.X, list) else list(res.X)  # Population
+            if res.X is None:
+                continue
+
+            # Handle dict (single solution), 1D array, or 2D array/list (population)
+            if isinstance(res.X, dict):
+                pop_X = [res.X]  # Single dict solution
+            elif isinstance(res.X, np.ndarray) and res.X.ndim == 1:
+                pop_X = [res.X]  # Single 1D array solution
+            else:
+                pop_X = res.X if isinstance(res.X, list) else list(res.X)  # Population
 
         # Extract all population members with their predicted score and uncertainty
         var_names_extract = sorted(conf.SS_VARIABLES.keys())
@@ -520,7 +535,8 @@ class LSProblem(ElementwiseProblem):
         out["F"] = np.array([pred])
 
 
-def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=0):
+def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=0,
+                       normalize_rbf=False):
     """
     Phase 2b: Local Search with CLUSTER-SPECIFIC RBF surrogates (NOT ensemble!)
 
@@ -574,7 +590,7 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
             train_data = [(X_cluster[i], F_cluster[i, obj_idx]) for i in range(len(X_cluster))]
 
             try:
-                local_surrogate = RBF_Model(n_neurons=10, train_data=train_data)
+                local_surrogate = RBF_Model(n_neurons=10, train_data=train_data, normalize=normalize_rbf)
             except np.linalg.LinAlgError:
                 # Skip cluster if RBF training fails (singular matrix = collinear/identical points)
                 continue
@@ -627,7 +643,43 @@ def local_search_phase(X_all, F_all, uncovered_objectives, eta_percent=20, l_max
 # MAIN PFES+SAMOTA ALGORITHM
 # ============================================================================
 
-def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, seed=0, window_size=None):
+def apply_sliding_window(X_array, F_array, phase1_count, window_size, window_mode, window_frac):
+    """
+    Select the training data for this iteration's GS/LS surrogates.
+
+    "flat" (default): a single window over the whole database, so once
+    len(database) > window_size the early Phase-1 (ART) samples start
+    getting dropped starting from the very first Phase-2 iteration.
+
+    "keep_art": always keeps every Phase-1 (ART) sample, and only slides
+    the window over Phase-2-generated samples. window_frac, if given,
+    sizes that Phase-2 window as a fraction of the Phase-2 samples
+    collected so far (recomputed every iteration) instead of a fixed
+    count via window_size.
+    """
+    if window_mode == "keep_art":
+        art_X, art_F = X_array[:phase1_count], F_array[:phase1_count]
+        p2_X, p2_F = X_array[phase1_count:], F_array[phase1_count:]
+        if len(p2_X) == 0:
+            return X_array, F_array
+        if window_frac is not None:
+            eff_window = max(1, int(round(window_frac * len(p2_X))))
+        elif window_size:
+            eff_window = window_size
+        else:
+            eff_window = len(p2_X)
+        if len(p2_X) > eff_window:
+            p2_X, p2_F = p2_X[-eff_window:], p2_F[-eff_window:]
+        return np.vstack([art_X, p2_X]), np.vstack([art_F, p2_F])
+
+    if window_size and len(X_array) > window_size:
+        return X_array[-window_size:], F_array[-window_size:]
+    return X_array, F_array
+
+
+def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, seed=0,
+                 window_size=None, window_mode="flat", window_frac=None,
+                 gs_population_selection=False, normalize_ls_rbf=False):
     """
     PFES + SAMOTA Integration on ADAS1
 
@@ -740,6 +792,7 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
     X_array = np.array(database_X)
     F_array = np.array(database_F)  # RAW estimates (for surrogates)
     F_processed = np.array(database_processed)  # Processed scores (for violation checking)
+    phase1_count = len(database_X)  # ART sample count, used by window_mode="keep_art"
 
     # Hit rate accumulators for Phase 2
     gs_total_evals = 0
@@ -817,13 +870,11 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
 
         gs_start_evals = eval_count
         _gs_t0 = time.time()
-        # Sliding window: train surrogates only on the most recent N samples
-        if window_size and len(X_array) > window_size:
-            X_train, F_train = X_array[-window_size:], F_array[-window_size:]
-        else:
-            X_train, F_train = X_array, F_array
+        X_train, F_train = apply_sliding_window(X_array, F_array, phase1_count,
+                                                 window_size, window_mode, window_frac)
         gs_candidates = global_search_nsga3(X_train, F_train, uncovered_objectives,
-                                            pop_size=30, n_gen=50, top_k=1, seed=seed)
+                                            pop_size=30, n_gen=50, top_k=1, seed=seed,
+                                            use_population_selection=gs_population_selection)
         _gs_train_time = time.time() - _gs_t0
         logger.info(f"  GS generated {len(gs_candidates)} candidates")
 
@@ -893,7 +944,8 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
         ls_start_evals = eval_count
         _ls_t0 = time.time()
         # Sliding window: train surrogates only on the most recent N samples (same window as GS)
-        ls_candidates = local_search_phase(X_train, F_train, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=seed)
+        ls_candidates = local_search_phase(X_train, F_train, uncovered_objectives, eta_percent=20, l_max=200, n_clusters=20, seed=seed,
+                                           normalize_rbf=normalize_ls_rbf)
         _ls_train_time = time.time() - _ls_t0
         logger.info(f"  LS generated {len(ls_candidates)} candidates")
 
@@ -1131,6 +1183,21 @@ if __name__ == "__main__":
     parser.add_argument("--logdir", type=str, default="out", help="Output directory for CSV results")
     parser.add_argument("--window_size", type=int, default=None,
                         help="Sliding window size for surrogate training (None = use all data)")
+    parser.add_argument("--window_mode", type=str, default="flat", choices=["flat", "keep_art"],
+                        help="flat = original single window over all data (default, unchanged "
+                             "behavior). keep_art = always keep Phase-1 ART samples, slide the "
+                             "window over Phase-2-generated samples only")
+    parser.add_argument("--window_frac", type=float, default=None,
+                        help="Only used with --window_mode keep_art: size the Phase-2 window as "
+                             "this fraction of Phase-2 samples collected so far, instead of a "
+                             "fixed --window_size")
+    parser.add_argument("--gs_population_selection", action="store_true",
+                        help="Select GS best/most-uncertain candidates from the GA's actual final "
+                             "population instead of pymoo's single-solution res.X (default: off, "
+                             "unchanged behavior)")
+    parser.add_argument("--normalize_ls_rbf", action="store_true",
+                        help="Standardize input features before fitting the per-cluster Local "
+                             "Search RBF surrogate (default: off, unchanged behavior)")
     args = parser.parse_args()
 
     BASE_SEED = args.seed
@@ -1146,11 +1213,16 @@ if __name__ == "__main__":
     for run in range(args.nruns):
         run_seed = BASE_SEED + run
         print(f"\n{'='*60}")
-        print(f"RUN {run + 1}/{args.nruns}  (seed={run_seed}, window={args.window_size})")
+        print(f"RUN {run + 1}/{args.nruns}  (seed={run_seed}, window={args.window_size}, "
+              f"mode={args.window_mode}, frac={args.window_frac}, "
+              f"gs_pop_sel={args.gs_population_selection}, norm_ls_rbf={args.normalize_ls_rbf})")
         print(f"{'='*60}")
 
         results = pfes_samota(max_iterations=1000, budget=args.budget,
-                              seed=run_seed, window_size=args.window_size)
+                              seed=run_seed, window_size=args.window_size,
+                              window_mode=args.window_mode, window_frac=args.window_frac,
+                              gs_population_selection=args.gs_population_selection,
+                              normalize_ls_rbf=args.normalize_ls_rbf)
 
         if score_df is None:
             n_scores = len(results['min_scores'])

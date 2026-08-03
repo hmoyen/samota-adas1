@@ -6,31 +6,38 @@ Uses scipy's Rbf for interpolation based on training data.
 
 import numpy as np
 from scipy.interpolate import Rbf as ScipyRbf
+from sklearn.preprocessing import StandardScaler
 
 
 class Model:
     """RBF surrogate model."""
 
-    def __init__(self, n_neurons=10, train_data=None):
+    def __init__(self, n_neurons=10, train_data=None, normalize=False):
         """
         Initialize RBF model.
-        
+
         Args:
             n_neurons: Number of neurons (RBF kernels)
             train_data: List of (X, y) tuples for training
+            normalize: Standardize input features before fitting. The RBF kernel
+                uses a single global epsilon over all dimensions, so on raw
+                (unnormalized) inputs the fit is dominated by whichever variable
+                has the largest numeric range.
         """
         self.n_neurons = n_neurons
         self.rbf_model = None
         self.X_train = None
         self.y_train = None
-        
+        self.normalize = normalize
+        self.X_scaler = StandardScaler() if normalize else None
+
         if train_data is not None:
             self.train(train_data)
 
     def train(self, train_data):
         """
         Train RBF model.
-        
+
         Args:
             train_data: List of (X, y) tuples
         """
@@ -43,7 +50,8 @@ class Model:
 
         # Prepare data for RBF
         # RBF expects: rbf(*coordinates, z)
-        X_T = self.X_train.T  # Shape: (n_features, n_samples)
+        X_fit = self.X_scaler.fit_transform(self.X_train) if self.normalize else self.X_train
+        X_T = X_fit.T  # Shape: (n_features, n_samples)
 
         # Use multiquadric RBF
         try:
@@ -58,10 +66,10 @@ class Model:
     def predict(self, X):
         """
         Predict value for input X.
-        
+
         Args:
             X: Input vector (1D array of parameters)
-            
+
         Returns:
             Predicted value
         """
@@ -70,6 +78,8 @@ class Model:
 
         # Ensure X is a numpy array
         X = np.array(X).flatten()
+        if self.normalize:
+            X = self.X_scaler.transform(X.reshape(1, -1)).flatten()
 
         # RBF expects individual coordinates as separate arguments
         try:
