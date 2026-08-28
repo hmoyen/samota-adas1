@@ -266,8 +266,88 @@ class GSMultiObjectivePerObjectiveSurrogateProblem(ElementwiseProblem):
         out["F"] = np.array(F)
 
 
+def _gs_one_objective(args):
+    """
+    Worker for a single uncovered objective in global_search_nsga3: trains that
+    objective's ensemble, runs its single-objective GA, and returns the selected
+    (best, most-uncertain) candidate params. Pulled out to a top-level function so
+    it can be run either inline (n_jobs=1, original sequential behavior) or across
+    a multiprocessing.Pool (n_jobs>1) - the two paths compute identically, just on
+    different processes.
+    """
+    (X_array, F_col, obj_idx, pop_size, n_gen, seed, top_k,
+     use_population_selection, use_cv_weights, cv_folds) = args
+
+    from SAMOTA_ensemble import SAMOTAPerObjectiveEnsemble
+
+    obj_ensemble = SAMOTAPerObjectiveEnsemble(
+        X_array,
+        F_col,
+        normalize=True,
+        obj_name=f"V{obj_idx}",
+        seed=seed + obj_idx * 100,
+        use_cv_weights=use_cv_weights,
+        cv_folds=cv_folds
+    )
+
+    # Single-objective GA for this objective
+    problem = GSPerObjectiveProblem(obj_ensemble)
+    ref_dirs = get_reference_directions("das-dennis", 1, n_partitions=2)
+    algorithm = NSGA3(
+        ref_dirs=ref_dirs,
+        pop_size=pop_size,
+        sampling=MixedVariableSampling(),
+        mating=MixedVariableMating(eliminate_duplicates=MixedVariableDuplicateElimination()),
+        eliminate_duplicates=MixedVariableDuplicateElimination()
+    )
+
+    res = minimize(problem, algorithm, ('n_gen', n_gen),
+                   seed=seed + obj_idx * 100, save_history=use_population_selection, verbose=False)
+
+    if use_population_selection:
+        if not res.history:
+            return []
+        pop_X = list(res.history[-1].pop.get("X"))
+    else:
+        if res.X is None:
+            return []
+
+        # Handle dict (single solution), 1D array, or 2D array/list (population)
+        if isinstance(res.X, dict):
+            pop_X = [res.X]  # Single dict solution
+        elif isinstance(res.X, np.ndarray) and res.X.ndim == 1:
+            pop_X = [res.X]  # Single 1D array solution
+        else:
+            pop_X = res.X if isinstance(res.X, list) else list(res.X)  # Population
+
+    # Extract all population members with their predicted score and uncertainty
+    var_names_extract = sorted(conf.SS_VARIABLES.keys())
+    scored_pop = []
+    for x in pop_X:
+        if isinstance(x, dict):
+            params = np.array([x[var] if conf.SS_VARIABLES[var]["domain"] == float else int(x[var])
+                               for var in var_names_extract])
+        else:
+            params = np.array(x)
+        pred, unc = obj_ensemble.predict(params.reshape(1, -1))
+        scored_pop.append((params, pred, unc))
+
+    obj_selected = []
+
+    # Select top-K by predicted score (exploitation) + top-K by uncertainty (exploration)
+    scored_pop.sort(key=lambda t: t[1])  # sort by predicted score ascending
+    for params, pred, unc in scored_pop[:top_k]:
+        obj_selected.append(params)
+
+    scored_pop.sort(key=lambda t: t[2], reverse=True)  # sort by uncertainty descending
+    for params, pred, unc in scored_pop[:top_k]:
+        obj_selected.append(params)
+
+    return obj_selected
+
+
 def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_gen=50, top_k=1, seed=0,
-                        use_population_selection=False):
+                        use_population_selection=False, use_cv_weights=False, cv_folds=5, n_jobs=1):
     """
     Phase 2a: Global Search - PER-OBJECTIVE surrogate + single-objective GA.
 
@@ -290,74 +370,32 @@ def global_search_nsga3(X_array, F_array, uncovered_objectives, pop_size=30, n_g
     from pure exploitation. Set use_population_selection=True to instead select from
     the GA's real final population (pop_size individuals) so exploitation and
     exploration can diverge.
+
+    use_cv_weights/cv_folds: forwarded to each objective's ensemble - see
+    SAMOTAPerObjectiveEnsemble docstring.
+
+    n_jobs: each uncovered objective's ensemble-fit + GA run is independent of the
+    others, so with n_jobs>1 they're computed in a multiprocessing.Pool instead of
+    sequentially. n_jobs=1 (default) is the original sequential behavior and is
+    bit-identical to before; only wall-clock time differs when n_jobs>1.
     """
     if len(uncovered_objectives) == 0:
         return []
 
-    from SAMOTA_ensemble import SAMOTAPerObjectiveEnsemble
-    obj_names = [f"V{i}" for i in range(len(F_array[0]))]
-    selected_params = []
+    work_items = [
+        (X_array, F_array[:, obj_idx], obj_idx, pop_size, n_gen, seed, top_k,
+         use_population_selection, use_cv_weights, cv_folds)
+        for obj_idx in uncovered_objectives
+    ]
 
-    for obj_idx in uncovered_objectives:
-        # Train per-objective ensemble ONLY for this objective's data
-        obj_ensemble = SAMOTAPerObjectiveEnsemble(
-            X_array,
-            F_array[:, obj_idx],
-            normalize=True,
-            obj_name=obj_names[obj_idx],
-            seed=seed + obj_idx * 100
-        )
+    if n_jobs and n_jobs > 1 and len(work_items) > 1:
+        import multiprocessing as mp
+        with mp.Pool(processes=min(n_jobs, len(work_items))) as pool:
+            per_obj_results = pool.map(_gs_one_objective, work_items)
+    else:
+        per_obj_results = [_gs_one_objective(item) for item in work_items]
 
-        # Single-objective GA for this objective
-        problem = GSPerObjectiveProblem(obj_ensemble)
-        ref_dirs = get_reference_directions("das-dennis", 1, n_partitions=2)
-        algorithm = NSGA3(
-            ref_dirs=ref_dirs,
-            pop_size=pop_size,
-            sampling=MixedVariableSampling(),
-            mating=MixedVariableMating(eliminate_duplicates=MixedVariableDuplicateElimination()),
-            eliminate_duplicates=MixedVariableDuplicateElimination()
-        )
-
-        res = minimize(problem, algorithm, ('n_gen', n_gen),
-                       seed=seed + obj_idx * 100, save_history=use_population_selection, verbose=False)
-
-        if use_population_selection:
-            if not res.history:
-                continue
-            pop_X = list(res.history[-1].pop.get("X"))
-        else:
-            if res.X is None:
-                continue
-
-            # Handle dict (single solution), 1D array, or 2D array/list (population)
-            if isinstance(res.X, dict):
-                pop_X = [res.X]  # Single dict solution
-            elif isinstance(res.X, np.ndarray) and res.X.ndim == 1:
-                pop_X = [res.X]  # Single 1D array solution
-            else:
-                pop_X = res.X if isinstance(res.X, list) else list(res.X)  # Population
-
-        # Extract all population members with their predicted score and uncertainty
-        var_names_extract = sorted(conf.SS_VARIABLES.keys())
-        scored_pop = []
-        for x in pop_X:
-            if isinstance(x, dict):
-                params = np.array([x[var] if conf.SS_VARIABLES[var]["domain"] == float else int(x[var])
-                                   for var in var_names_extract])
-            else:
-                params = np.array(x)
-            pred, unc = obj_ensemble.predict(params.reshape(1, -1))
-            scored_pop.append((params, pred, unc))
-
-        # Select top-K by predicted score (exploitation) + top-K by uncertainty (exploration)
-        scored_pop.sort(key=lambda t: t[1])  # sort by predicted score ascending
-        for params, pred, unc in scored_pop[:top_k]:
-            selected_params.append(params)
-
-        scored_pop.sort(key=lambda t: t[2], reverse=True)  # sort by uncertainty descending
-        for params, pred, unc in scored_pop[:top_k]:
-            selected_params.append(params)
+    selected_params = [p for obj_selected in per_obj_results for p in obj_selected]
 
     # Remove duplicates across objectives
     unique_params = []
@@ -679,7 +717,8 @@ def apply_sliding_window(X_array, F_array, phase1_count, window_size, window_mod
 
 def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, seed=0,
                  window_size=None, window_mode="flat", window_frac=None,
-                 gs_population_selection=False, normalize_ls_rbf=False):
+                 gs_population_selection=False, normalize_ls_rbf=False,
+                 use_cv_weights=False, cv_folds=5, gs_n_jobs=1):
     """
     PFES + SAMOTA Integration on ADAS1
 
@@ -860,7 +899,9 @@ def pfes_samota(max_iterations=1000, max_time_seconds=float("inf"), budget=900, 
                                                  window_size, window_mode, window_frac)
         gs_candidates = global_search_nsga3(X_train, F_train, uncovered_objectives,
                                             pop_size=30, n_gen=50, top_k=1, seed=seed,
-                                            use_population_selection=gs_population_selection)
+                                            use_population_selection=gs_population_selection,
+                                            use_cv_weights=use_cv_weights, cv_folds=cv_folds,
+                                            n_jobs=gs_n_jobs)
         logger.info(f"  GS generated {len(gs_candidates)} candidates")
 
         gs_violations_before = len(archive)
@@ -1109,6 +1150,21 @@ if __name__ == "__main__":
     parser.add_argument("--normalize_ls_rbf", action="store_true",
                         help="Standardize input features before fitting the per-cluster Local "
                              "Search RBF surrogate (default: off, unchanged behavior)")
+    parser.add_argument("--cv_ensemble_weights", action="store_true",
+                        help="Weight each objective's GP/Poly/RBF ensemble by K-fold "
+                             "cross-validated error instead of in-sample training error "
+                             "(default: off, unchanged behavior). In-sample error is biased "
+                             "because GP/RBF nearly interpolate the training set regardless "
+                             "of true generalization quality.")
+    parser.add_argument("--cv_folds", type=int, default=5,
+                        help="Number of folds used when --cv_ensemble_weights is set")
+    parser.add_argument("--gs_n_jobs", type=int, default=1,
+                        help="Number of worker processes for Global Search's per-objective "
+                             "ensemble+GA loop (default: 1 = sequential, unchanged behavior "
+                             "and wall-clock timing). Each objective is computed independently, "
+                             "so setting this >1 only changes runtime, not results. Don't combine "
+                             "with running many experiments in parallel already - this multiplies "
+                             "process count on top of that.")
     args = parser.parse_args()
 
     BASE_SEED = args.seed
@@ -1125,14 +1181,17 @@ if __name__ == "__main__":
         print(f"\n{'='*60}")
         print(f"RUN {run + 1}/{args.nruns}  (seed={run_seed}, window={args.window_size}, "
               f"mode={args.window_mode}, frac={args.window_frac}, "
-              f"gs_pop_sel={args.gs_population_selection}, norm_ls_rbf={args.normalize_ls_rbf})")
+              f"gs_pop_sel={args.gs_population_selection}, norm_ls_rbf={args.normalize_ls_rbf}, "
+              f"cv_weights={args.cv_ensemble_weights}, gs_n_jobs={args.gs_n_jobs})")
         print(f"{'='*60}")
 
         results = pfes_samota(max_iterations=1000, budget=args.budget,
                               seed=run_seed, window_size=args.window_size,
                               window_mode=args.window_mode, window_frac=args.window_frac,
                               gs_population_selection=args.gs_population_selection,
-                              normalize_ls_rbf=args.normalize_ls_rbf)
+                              normalize_ls_rbf=args.normalize_ls_rbf,
+                              use_cv_weights=args.cv_ensemble_weights,
+                              cv_folds=args.cv_folds, gs_n_jobs=args.gs_n_jobs)
 
         if score_df is None:
             n_scores = len(results['min_scores'])

@@ -8,6 +8,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from sklearn.kernel_ridge import KernelRidge
+from sklearn.model_selection import KFold
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -19,7 +20,8 @@ class SAMOTAPerObjectiveEnsemble:
     Uses Goel weighting based on training accuracy.
     """
 
-    def __init__(self, X_train, y_train_single_obj, normalize=True, obj_name="V0", seed=42):
+    def __init__(self, X_train, y_train_single_obj, normalize=True, obj_name="V0", seed=42,
+                 use_cv_weights=False, cv_folds=5):
         """
         Initialize ensemble for ONE objective.
 
@@ -29,6 +31,14 @@ class SAMOTAPerObjectiveEnsemble:
             normalize: Normalize inputs and outputs
             obj_name: Name of objective (e.g., "V0") for tracking
             seed: Random state for the GP surrogate, derived from the run's seed
+            use_cv_weights: If True, weight the ensemble by K-fold cross-validated error
+                instead of in-sample training error. In-sample error is misleading here
+                because GP (alpha=1e-6) and RBF (KernelRidge alpha=1e-6) both nearly
+                interpolate the training set, so they almost always look "better" than
+                the lower-capacity polynomial model regardless of which one actually
+                generalizes to new candidate points. Falls back to in-sample error when
+                there aren't enough samples for cv_folds splits.
+            cv_folds: Number of folds used when use_cv_weights=True
         """
         self.X_train = X_train
         self.y_train = y_train_single_obj
@@ -64,14 +74,17 @@ class SAMOTAPerObjectiveEnsemble:
         self.rbf = KernelRidge(kernel='rbf', gamma=0.1, alpha=1e-6)
         self.rbf.fit(X_train_norm, y_train_norm)
 
-        # Compute training errors for Goel weighting
-        gp_pred = self.gp.predict(X_train_norm)
-        poly_pred = self.poly.predict(X_poly)
-        rbf_pred = self.rbf.predict(X_train_norm)
+        # Compute errors for Goel weighting
+        if use_cv_weights and len(y_train_norm) >= max(4, cv_folds):
+            e_gp, e_poly, e_rbf = self._cv_errors(X_train_norm, y_train_norm, cv_folds, seed)
+        else:
+            gp_pred = self.gp.predict(X_train_norm)
+            poly_pred = self.poly.predict(X_poly)
+            rbf_pred = self.rbf.predict(X_train_norm)
 
-        e_gp = np.mean(np.abs(gp_pred - y_train_norm))
-        e_poly = np.mean(np.abs(poly_pred - y_train_norm))
-        e_rbf = np.mean(np.abs(rbf_pred - y_train_norm))
+            e_gp = np.mean(np.abs(gp_pred - y_train_norm))
+            e_poly = np.mean(np.abs(poly_pred - y_train_norm))
+            e_rbf = np.mean(np.abs(rbf_pred - y_train_norm))
 
         # Goel formula: weight inversely by error
         e_sum = e_gp + e_poly + e_rbf
@@ -90,6 +103,48 @@ class SAMOTAPerObjectiveEnsemble:
         self.e_poly = e_poly
         self.e_rbf = e_rbf
         self.mae = np.mean([e_gp, e_poly, e_rbf])
+        self.use_cv_weights = use_cv_weights
+        self.cv_folds = cv_folds
+
+    def _cv_errors(self, X_norm, y_norm, cv_folds, seed):
+        """
+        K-fold cross-validated MAE for each of the 3 model types, used for
+        Goel-style ensemble weighting instead of in-sample training error.
+
+        Each fold's GP uses n_restarts_optimizer=1 (not this ensemble's full
+        setting) purely to keep the extra K fits cheap - this is only used to
+        rank the 3 model types relative to each other, not for the final
+        predict() model (self.gp), which is still fit with the full settings
+        on all the data.
+        """
+        n_splits = min(cv_folds, len(y_norm))
+        kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        gp_errs, poly_errs, rbf_errs = [], [], []
+
+        for train_idx, test_idx in kf.split(X_norm):
+            X_tr, X_te = X_norm[train_idx], X_norm[test_idx]
+            y_tr, y_te = y_norm[train_idx], y_norm[test_idx]
+
+            gp = GaussianProcessRegressor(alpha=1e-6, normalize_y=False,
+                                          n_restarts_optimizer=1, random_state=seed)
+            gp.fit(X_tr, y_tr)
+            gp_errs.append(np.abs(gp.predict(X_te) - y_te))
+
+            pf = PolynomialFeatures(degree=2, include_bias=False)
+            X_tr_poly = pf.fit_transform(X_tr)
+            X_te_poly = pf.transform(X_te)
+            poly = LinearRegression()
+            poly.fit(X_tr_poly, y_tr)
+            poly_errs.append(np.abs(poly.predict(X_te_poly) - y_te))
+
+            rbf = KernelRidge(kernel='rbf', gamma=0.1, alpha=1e-6)
+            rbf.fit(X_tr, y_tr)
+            rbf_errs.append(np.abs(rbf.predict(X_te) - y_te))
+
+        e_gp = float(np.mean(np.concatenate(gp_errs)))
+        e_poly = float(np.mean(np.concatenate(poly_errs)))
+        e_rbf = float(np.mean(np.concatenate(rbf_errs)))
+        return e_gp, e_poly, e_rbf
 
     def predict(self, X):
         """
@@ -159,7 +214,8 @@ class SAMOTAPerObjectiveEnsemble:
         y_combined = np.concatenate([self.y_train, y_new])
 
         # Retrain (reinitialize)
-        self.__init__(X_combined, y_combined, self.normalize, self.obj_name, self.seed)
+        self.__init__(X_combined, y_combined, self.normalize, self.obj_name, self.seed,
+                     use_cv_weights=self.use_cv_weights, cv_folds=self.cv_folds)
 
 
 class SAMOTAGlobalSurrogates:
@@ -170,7 +226,8 @@ class SAMOTAGlobalSurrogates:
     ENHANCED: Supports training ONLY uncovered objectives for efficiency.
     """
 
-    def __init__(self, X_train, F_train, normalize=True, objective_indices=None, seed=42):
+    def __init__(self, X_train, F_train, normalize=True, objective_indices=None, seed=42,
+                 use_cv_weights=False, cv_folds=5):
         """
         Initialize surrogates for specified objectives (or all if None).
 
@@ -181,6 +238,8 @@ class SAMOTAGlobalSurrogates:
             objective_indices: List of objective indices to train (e.g., [2,3,4])
                              If None, trains all 5 objectives
             seed: Random state for each objective's GP surrogate, derived from the run's seed
+            use_cv_weights: passed through to each SAMOTAPerObjectiveEnsemble
+            cv_folds: passed through to each SAMOTAPerObjectiveEnsemble
         """
         self.X_train = X_train
         self.F_train = F_train
@@ -204,7 +263,9 @@ class SAMOTAGlobalSurrogates:
                 F_train[:, obj_idx],
                 normalize=normalize,
                 obj_name=obj_name,
-                seed=seed + obj_idx
+                seed=seed + obj_idx,
+                use_cv_weights=use_cv_weights,
+                cv_folds=cv_folds
             )
 
     def predict_all(self, X):
